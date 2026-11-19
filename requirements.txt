@@ -1,0 +1,23 @@
+# Web framework
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+jinja2>=3.1,<4.0
+python-multipart>=0.0.9
+itsdangerous>=2.2,<3.0
+
+# Config / DB
+pydantic-settings>=2.4,<3.0
+sqlalchemy>=2.0,<3.0
+
+# Auth (bcrypt pinned: passlib 1.7.4 is incompatible with bcrypt>=4.1/5.x)
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+
+# PDF + signing
+pyHanko[pkcs11]>=0.25,<1.0
+python-pkcs11>=0.7
+pymupdf>=1.24
+requests>=2.31
+
+# Windows has no system tz database: needed for Asia/Kolkata (IST)
+tzdata

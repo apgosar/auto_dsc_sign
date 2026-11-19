@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  {% include "_head.html" %}
+  <title>DSC Signer</title>
+  <meta name="csrf-token" content="{{ csrf }}">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    #pdf-stage{position:relative;display:inline-block;touch-action:none;user-select:none;cursor:crosshair;line-height:0}
+    #pdf-stage.hidden{display:none}
+    #pdf-canvas{display:block;box-shadow:0 2px 10px rgba(15,23,42,.15)}
+    #sig-box{position:absolute;border:2px dashed #1d4ed8;background:rgba(59,130,246,.16);cursor:move;display:none}
+    #sig-box .lbl-in{position:absolute;left:4px;top:3px;font:600 10px/1.1 system-ui;color:#1e3a8a;pointer-events:none}
+    #sig-box .handle{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;background:#1d4ed8;border:2px solid #fff;border-radius:3px;cursor:nwse-resize}
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+  <header class="bg-white border-b border-slate-200">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3">
+      <div class="flex items-center gap-2 mr-auto">
+        <div class="h-8 w-8 rounded-md bg-blue-700 text-white flex items-center justify-center text-xs font-bold">DSC</div>
+        <span class="font-bold">DSC Signer</span>
+      </div>
+      <span id="token-badge" class="badge bg-slate-100 text-slate-600" title="USB token status">
+        <span class="dot bg-slate-400"></span><span id="token-text">Checking token…</span>
+      </span>
+      <span class="text-sm text-slate-600">{{ user.full_name or user.username }}</span>
+      {% if user.is_admin %}<a href="/admin" class="btn btn-ghost btn-sm">Admin Panel</a>{% endif %}
+      <button id="logout-btn" class="btn btn-ghost btn-sm">Logout</button>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6 grid gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+    <!-- ================= left: upload + options ================= -->
+    <section class="card p-5 space-y-5 self-start">
+      <div>
+        <h2 class="font-bold text-slate-900 mb-1">1. Upload PDF(s)</h2>
+        <label id="drop-zone" for="file-input"
+               class="mt-2 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl p-5 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/40">
+          <span class="text-sm font-semibold text-slate-700">Drop PDFs here or click to choose</span>
+          <span class="text-xs text-slate-500 mt-1">Up to {{ max_files }} files, {{ max_mb }} MB each</span>
+        </label>
+        <input id="file-input" type="file" accept="application/pdf,.pdf" multiple class="hidden">
+        <ul id="file-list" class="mt-2 text-sm space-y-1"></ul>
+      </div>
+
+      <div>
+        <h2 class="font-bold text-slate-900 mb-2">2. Signature placement</h2>
+        <div role="tablist" class="grid grid-cols-3 gap-1 bg-slate-100 rounded-lg p-1 text-xs font-semibold">
+          <button role="tab" class="tab-btn rounded-md py-2" data-mode="visual" aria-selected="true">Visual</button>
+          <button role="tab" class="tab-btn rounded-md py-2" data-mode="preset" aria-selected="false">Page &amp; Position</button>
+          <button role="tab" class="tab-btn rounded-md py-2" data-mode="anchor" aria-selected="false">Text Anchor</button>
+        </div>
+
+        <!-- Mode 1 -->
+        <div class="mode-panel mt-4 space-y-3" data-mode="visual">
+          <p class="text-sm text-slate-600">Draw a box on the page preview (drag on the page), then move or resize it. The same position is used for every uploaded file.</p>
+          <div>
+            <span class="lbl">Quick size</span>
+            <div class="flex gap-2">
+              <button class="btn btn-ghost btn-sm size-preset" data-w="150" data-h="50">Small 150×50</button>
+              <button class="btn btn-ghost btn-sm size-preset" data-w="200" data-h="70">Medium 200×70</button>
+              <button class="btn btn-ghost btn-sm size-preset" data-w="250" data-h="90">Large 250×90</button>
+            </div>
+          </div>
+          <p id="visual-info" class="text-xs text-slate-500">No box drawn yet.</p>
+        </div>
+
+        <!-- Mode 2 -->
+        <div class="mode-panel mt-4 space-y-3 hidden" data-mode="preset">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="lbl" for="p-pages">Pages</label>
+              <select id="p-pages" class="inp">
+                <option value="first">First page</option>
+                <option value="last" selected>Last page</option>
+                <option value="all">All pages</option>
+                <option value="specific">Specific page(s)</option>
+              </select>
+            </div>
+            <div id="p-pagelist-wrap" class="hidden">
+              <label class="lbl" for="p-pagelist">Page numbers</label>
+              <input id="p-pagelist" class="inp" placeholder="e.g. 8 or 1,3,8 or 2-5">
+            </div>
+          </div>
+          <div>
+            <label class="lbl" for="p-position">Position</label>
+            <select id="p-position" class="inp">
+              <option value="bottom-right" selected>Bottom-Right</option>
+              <option value="bottom-left">Bottom-Left</option>
+              <option value="bottom-center">Bottom-Center</option>
+              <option value="top-right">Top-Right</option>
+              <option value="top-left">Top-Left</option>
+              <option value="custom">Custom X/Y margins</option>
+            </select>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="lbl" for="p-mx" id="p-mx-lbl">Side margin (pt)</label>
+              <input id="p-mx" type="number" class="inp" value="36" min="0">
+            </div>
+            <div>
+              <label class="lbl" for="p-my" id="p-my-lbl">Top/bottom margin (pt)</label>
+              <input id="p-my" type="number" class="inp" value="36" min="0">
+            </div>
+            <div>
+              <label class="lbl" for="p-w">Width (pt)</label>
+              <input id="p-w" type="number" class="inp" value="180" min="20">
+            </div>
+            <div>
+              <label class="lbl" for="p-h">Height (pt)</label>
+              <input id="p-h" type="number" class="inp" value="65" min="20">
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">72 pt = 1 inch. A4 is 595 × 842 pt.</p>
+        </div>
+
+        <!-- Mode 3 -->
+        <div class="mode-panel mt-4 space-y-3 hidden" data-mode="anchor">
+          <div>
+            <label class="lbl" for="a-text">Search text</label>
+            <input id="a-text" class="inp" placeholder="e.g. Authorized Signatory">
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="lbl" for="a-placement">Place signature</label>
+              <select id="a-placement" class="inp">
+                <option value="above" selected>Above text</option>
+                <option value="below">Below text</option>
+                <option value="right">Right of text</option>
+                <option value="overlay">Overlay on text</option>
+              </select>
+            </div>
+            <div>
+              <label class="lbl" for="a-match">Occurrences</label>
+              <select id="a-match" class="inp">
+                <option value="first" selected>First occurrence</option>
+                <option value="last">Last occurrence</option>
+                <option value="all">All occurrences</option>
+              </select>
+            </div>
+            <div>
+              <label class="lbl" for="a-w">Width (pt)</label>
+              <input id="a-w" type="number" class="inp" value="180" min="20">
+            </div>
+            <div>
+              <label class="lbl" for="a-h">Height (pt)</label>
+              <input id="a-h" type="number" class="inp" value="65" min="20">
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">Text search needs a text-based PDF (not a scanned image).</p>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="font-bold text-slate-900 mb-2">3. Details (optional)</h2>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="lbl" for="reason">Reason</label>
+            <input id="reason" class="inp" maxlength="200" value="{{ default_reason }}" placeholder="e.g. Approved">
+          </div>
+          <div>
+            <label class="lbl" for="location">Location</label>
+            <input id="location" class="inp" maxlength="200" value="{{ default_location }}" placeholder="e.g. Mumbai">
+          </div>
+        </div>
+      </div>
+
+      <div id="submit-msg" class="hidden text-sm rounded-lg p-3"></div>
+      <button id="submit-btn" class="btn btn-primary w-full justify-center" disabled>Queue for signing</button>
+    </section>
+
+    <!-- ================= right: preview + jobs ================= -->
+    <section class="space-y-6 min-w-0">
+      <div id="preview-card" class="card p-4">
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <h2 class="font-bold text-slate-900 mr-auto">Preview <span id="preview-name" class="font-normal text-slate-500 text-sm"></span></h2>
+          <button id="prev-page" class="btn btn-ghost btn-sm" disabled>‹ Prev</button>
+          <span id="page-info" class="text-sm text-slate-600">Page – of –</span>
+          <button id="next-page" class="btn btn-ghost btn-sm" disabled>Next ›</button>
+          <button id="clear-box" class="btn btn-ghost btn-sm">Clear box</button>
+        </div>
+        <div id="pdf-scroll" class="overflow-auto bg-slate-200/70 rounded-lg p-3 text-center min-h-[300px] flex items-start justify-center">
+          <div id="pdf-empty" class="text-slate-500 text-sm self-center">Choose a PDF to see the preview.</div>
+          <div id="pdf-stage" class="hidden">
+            <canvas id="pdf-canvas"></canvas>
+            <div id="sig-box"><span class="lbl-in">Signature</span><span class="handle"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-4">
+        <div class="flex items-center mb-3">
+          <h2 class="font-bold text-slate-900 mr-auto">Signing queue</h2>
+          {% if user.is_admin %}
+          <label class="text-xs text-slate-600 flex items-center gap-1"><input type="checkbox" id="show-all-jobs"> all users</label>
+          {% endif %}
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="text-left text-xs uppercase text-slate-500 border-b">
+              <tr><th class="py-2 pr-3">File</th><th class="pr-3">Mode</th><th class="pr-3">Status</th><th class="pr-3">Submitted</th><th></th></tr>
+            </thead>
+            <tbody id="jobs-body"><tr><td colspan="5" class="py-6 text-center text-slate-400">No jobs yet.</td></tr></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-slate-400 mt-3">Uploaded and signed files are deleted automatically after {{ retention }} minutes.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>DSC.initDashboard({ isAdmin: {{ 'true' if user.is_admin else 'false' }} });</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  {% include "_head.html" %}
+  <title>Sign in · DSC Signer</title>
+</head>
+<body class="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+  <main class="card w-full max-w-sm p-7">
+    <div class="flex items-center gap-3 mb-6">
+      <div class="h-10 w-10 rounded-lg bg-blue-700 text-white flex items-center justify-center font-bold">DSC</div>
+      <div>
+        <h1 class="text-lg font-bold text-slate-900">DSC Signer</h1>
+        <p class="text-xs text-slate-500">Digital signature with USB token</p>
+      </div>
+    </div>
+    <form id="login-form" class="space-y-4" autocomplete="on">
+      <div>
+        <label class="lbl" for="username">Username</label>
+        <input id="username" name="username" class="inp" autocomplete="username" required autofocus>
+      </div>
+      <div>
+        <label class="lbl" for="password">Password</label>
+        <input id="password" name="password" type="password" class="inp" autocomplete="current-password" required>
+      </div>
+      <div id="login-error" class="hidden rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm p-3"></div>
+      <button id="login-btn" class="btn btn-primary w-full justify-center" type="submit">Sign in</button>
+    </form>
+    <p class="mt-6 text-[11px] leading-relaxed text-slate-400">
+      Access is restricted to approved users, networks and devices. Attempts are logged.
+    </p>
+  </main>
+  <script src="/static/app.js"></script>
+  <script>DSC.initLogin();</script>
+</body>
+</html>
