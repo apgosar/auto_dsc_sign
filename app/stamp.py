@@ -136,14 +136,20 @@ def _text_block(lines: list[str], size: float, x: float, top: float) -> list[byt
 
 
 def build_appearance_stream(width: float, height: float, *, name: str, timestamp: datetime,
-                            tz_name: str, reason: str = "", location: str = "") -> bytes:
-    """Return the raw content stream (bytes) for a width x height appearance box."""
+                            tz_name: str, reason: str = "", location: str = "",
+                            text_x0: float = 0.0) -> bytes:
+    """Return the raw content stream (bytes) for a width x height appearance box.
+
+    text_x0 reserves that many points on the left (e.g. for a logo); the two text columns
+    are laid out in the remaining width.
+    """
     width, height = float(width), float(height)  # pyHanko hands us Decimal values
     pad = max(2.0, height * PAD)
-    inner_w, inner_h = width - 2 * pad, height - 2 * pad
+    inner_w, inner_h = width - 2 * pad - text_x0, height - 2 * pad
     gap = width * GAP_SHARE
     left_w = inner_w * LEFT_SHARE
     right_w = inner_w - left_w - gap
+    pad_x = pad + text_x0
 
     name_lines, name_size = _fit_name(name, left_w, inner_h)
     details = [f"Digitally signed by {name}", f"Date: {acrobat_date(timestamp, tz_name)}"]
@@ -160,13 +166,14 @@ def build_appearance_stream(width: float, height: float, *, name: str, timestamp
     detail_top = pad + inner_h - (inner_h - detail_block_h) / 2
 
     cmds = [b"q", b"0 g"]
-    cmds += _text_block(name_lines, name_size, pad, name_top)
-    cmds += _text_block(detail_lines, detail_size, pad + left_w + gap, detail_top)
+    cmds += _text_block(name_lines, name_size, pad_x, name_top)
+    cmds += _text_block(detail_lines, detail_size, pad_x + left_w + gap, detail_top)
     cmds.append(b"Q")
     return b"\n".join(cmds)
 
 
 # --------------------------------------------------------------------------- logo watermark
+NL = bytes([10])  # newline separator for content-stream operators
 MAX_LOGO_PIXELS = 800  # longest side kept in the PDF; bigger images are downscaled
 
 
@@ -236,9 +243,24 @@ def _logo_commands(logo: LogoImage, width: float, height: float, opacity: float)
     return [b"q", f"/GSLogo gs".encode(), f"{w:.2f} 0 0 {h:.2f} {x:.2f} {y:.2f} cm".encode(), b"/ImLogo Do", b"Q"]
 
 
+def _logo_left_placement(logo: LogoImage, width: float, height: float) -> tuple[float, float, float, float]:
+    """Logo in its own column on the left: full box height (minus padding), at most 30% of
+    the width. Returns (x, y, w, h) of the drawn image."""
+    pad = max(2.0, height * PAD)
+    max_w, max_h = (width - 2 * pad) * 0.30, height - 2 * pad
+    scale = min(max_w / logo.width, max_h / logo.height)
+    w, h = logo.width * scale, logo.height * scale
+    return pad, (height - h) / 2, w, h
+
+
 def make_xobject(width: float, height: float, *, writer=None, logo_path: str = "",
-                 logo_opacity: float = 0.15, **kwargs):
-    """Build the pyHanko form XObject (StreamObject) for the appearance."""
+                 logo_opacity: float = 0.15, logo_position: str = "left", **kwargs):
+    """Build the pyHanko form XObject (StreamObject) for the appearance.
+
+    logo_position "left": the logo gets its own space at the left edge, drawn at full
+    strength, and the text columns shift right so nothing overlaps.
+    logo_position "center": faded watermark centred behind the text (logo_opacity).
+    """
     from pyhanko.pdf_utils import generic
     from pyhanko.pdf_utils.writer import init_xobject_dictionary
 
@@ -253,7 +275,6 @@ def make_xobject(width: float, height: float, *, writer=None, logo_path: str = "
     resources = generic.DictionaryObject({
         n("/Font"): generic.DictionaryObject({n(FONT_RES_NAME): font}),
     })
-    content = build_appearance_stream(width, height, **kwargs)
 
     logo = None
     if logo_path and writer is not None:
@@ -261,9 +282,14 @@ def make_xobject(width: float, height: float, *, writer=None, logo_path: str = "
             logo = load_logo(logo_path)
         except Exception as exc:  # noqa: BLE001  a bad logo must never block signing
             logging.getLogger("dsc.stamp").warning("Watermark skipped (%s): %s", logo_path, exc)
-    if logo is not None:
+
+    if logo is None:
+        content = build_appearance_stream(width, height, **kwargs)
+        return init_xobject_dictionary(content, width, height, resources)
+
+    resources[n("/XObject")] = generic.DictionaryObject({n("/ImLogo"): _image_xobject(writer, logo)})
+    if (logo_position or "left").lower() == "center":
         opacity = min(max(float(logo_opacity), 0.0), 1.0)
-        resources[n("/XObject")] = generic.DictionaryObject({n("/ImLogo"): _image_xobject(writer, logo)})
         resources[n("/ExtGState")] = generic.DictionaryObject({
             n("/GSLogo"): generic.DictionaryObject({
                 n("/Type"): n("/ExtGState"),
@@ -272,6 +298,11 @@ def make_xobject(width: float, height: float, *, writer=None, logo_path: str = "
             })
         })
         # logo first, so the text is drawn on top of it
-        content = b"\n".join(_logo_commands(logo, width, height, opacity)) + b"\n" + content
-
+        content = (NL.join(_logo_commands(logo, width, height, opacity)) + NL
+                   + build_appearance_stream(width, height, **kwargs))
+    else:
+        x, y, w, h = _logo_left_placement(logo, width, height)
+        logo_cmds = [b"q", f"{w:.2f} 0 0 {h:.2f} {x:.2f} {y:.2f} cm".encode(), b"/ImLogo Do", b"Q"]
+        content = (NL.join(logo_cmds) + NL
+                   + build_appearance_stream(width, height, text_x0=w + width * GAP_SHARE, **kwargs))
     return init_xobject_dictionary(content, width, height, resources)

@@ -323,6 +323,7 @@ def _install_rotation_patch() -> None:
                 writer=writer,
                 logo_path=settings.stamp_logo_path,
                 logo_opacity=settings.SIGN_STAMP_LOGO_OPACITY,
+                logo_position=settings.SIGN_STAMP_LOGO_POSITION,
                 name=self.name or "Signer",
                 timestamp=self.timestamp,
                 tz_name=settings.SIGN_TIMEZONE,

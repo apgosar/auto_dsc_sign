@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Only used with SIGN_STAMP_STYLE=acrobat. "auto" = branding/logo.png if it exists,
     # a file path = that image, blank = no watermark.
     SIGN_STAMP_LOGO: str = "auto"
+    # left = logo in its own space at the left edge, full strength, text beside it
+    # center = faded watermark behind the text (uses SIGN_STAMP_LOGO_OPACITY)
+    SIGN_STAMP_LOGO_POSITION: str = "left"
     SIGN_STAMP_LOGO_OPACITY: float = Field(default=0.15, ge=0.0, le=1.0)
     MAX_SIGNATURES_PER_DOC: int = 50
 
