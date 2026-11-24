@@ -152,8 +152,8 @@
       state.mode = b.dataset.mode;
       $$(".tab-btn").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
       $$(".mode-panel").forEach((p) => p.classList.toggle("hidden", p.dataset.mode !== state.mode));
-      $("#sig-box").style.display = state.mode === "visual" && state.box ? "block" : "none";
-      $("#pdf-stage").style.cursor = state.mode === "visual" ? "crosshair" : "default";
+      $("#pdf-pages").classList.toggle("drawable", state.mode === "visual");
+      drawBox();
       updateSubmit();
     }));
     const pPages = $("#p-pages"), pPos = $("#p-position");
@@ -165,52 +165,115 @@
     }
     pPos.addEventListener("change", updateMarginLabels); updateMarginLabels();
 
-    // ---------------- PDF preview
-    const canvas = $("#pdf-canvas"), stage = $("#pdf-stage"), boxEl = $("#sig-box"), scroll = $("#pdf-scroll");
-    function clearPreview() {
-      state.pdf = null; state.pageCount = 0;
-      stage.classList.add("hidden"); $("#pdf-empty").classList.remove("hidden");
-      $("#preview-name").textContent = ""; updatePageNav();
+    // ---------------- PDF preview: whole document in one scrolling column.
+    // Pages are laid out at their real size up front and rendered lazily as they scroll
+    // into view, so long PDFs stay fast. The signature box can be drawn on any page.
+    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+    const scroll = $("#pdf-scroll"), pagesEl = $("#pdf-pages"), boxEl = $("#sig-box");
+    Object.assign(state, { sizes: [], zoom: null, boxPage: null, layoutToken: 0, loadToken: 0, observer: null });
+
+    function fitScale() {
+      const maxW = Math.max(...state.sizes.map((s) => s.w), 1);
+      // leave room for the padding and the vertical scrollbar that appears once pages are added
+      return Math.min(1.6, Math.max(0.3, (scroll.clientWidth - 24 - 20) / maxW));
     }
+    const pageWrap = (n) => pagesEl.querySelector(`.pdf-page[data-page="${n}"]`);
+
+    function clearPreview() {
+      state.loadToken++; state.layoutToken++;
+      if (state.observer) state.observer.disconnect();
+      if (state.pdf) { state.pdf.destroy(); state.pdf = null; }
+      state.pageCount = 0; state.sizes = []; state.box = null; state.boxPage = null;
+      scroll.append(boxEl); boxEl.style.display = "none";
+      pagesEl.textContent = ""; pagesEl.classList.add("hidden");
+      $("#pdf-empty").classList.remove("hidden");
+      $("#preview-name").textContent = "";
+      updatePageNav(); drawBox();
+    }
+
     async function loadPreview(file) {
       if (!window.pdfjsLib) { $("#pdf-empty").textContent = "PDF.js failed to load (check internet access)."; return; }
+      clearPreview();
+      const token = state.loadToken;
+      $("#pdf-empty").textContent = "Loading preview…";
       try {
         const buf = await file.arrayBuffer();
-        state.pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-        state.pageCount = state.pdf.numPages;
-        state.pageNum = Math.min(state.pageNum, state.pageCount) || 1;
+        const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+        if (token !== state.loadToken) { pdf.destroy(); return; }
+        const sizes = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const vp = (await pdf.getPage(i)).getViewport({ scale: 1 });
+          sizes.push({ w: vp.width, h: vp.height });
+        }
+        if (token !== state.loadToken) { pdf.destroy(); return; }
+        Object.assign(state, { pdf, sizes, pageCount: pdf.numPages, pageNum: 1 });
         $("#preview-name").textContent = "· " + file.name;
-        $("#pdf-empty").classList.add("hidden"); stage.classList.remove("hidden");
-        await renderPage();
+        $("#pdf-empty").classList.add("hidden"); pagesEl.classList.remove("hidden");
+        layout(1);
       } catch (ex) {
         clearPreview();
         $("#pdf-empty").textContent = "Could not render this PDF: " + ex.message;
       }
     }
-    async function renderPage() {
-      if (!state.pdf) return;
-      if (state.rendering) { state.renderAgain = true; return; }
-      state.rendering = true;
-      try {
-        const page = await state.pdf.getPage(state.pageNum);
-        const base = page.getViewport({ scale: 1 });
-        const avail = Math.max(280, scroll.clientWidth - 32);
-        state.fitScale = Math.min(1.6, avail / base.width);
-        state.scale = state.zoom || state.fitScale;
-        const vp = page.getViewport({ scale: state.scale });
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = Math.floor(vp.width * dpr); canvas.height = Math.floor(vp.height * dpr);
-        canvas.style.width = vp.width + "px"; canvas.style.height = vp.height + "px";
-        const ctx = canvas.getContext("2d");
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        await page.render({ canvasContext: ctx, viewport: vp }).promise;
-        state.pagePt = { w: base.width, h: base.height };
-        drawBox(); updatePageNav();
-      } finally {
-        state.rendering = false;
-        if (state.renderAgain) { state.renderAgain = false; renderPage(); }
-      }
+
+    async function renderInto(wrap, token) {
+      if (wrap.dataset.rendered === "1" || !state.pdf) return;
+      wrap.dataset.rendered = "1";
+      const page = await state.pdf.getPage(+wrap.dataset.page);
+      if (token !== state.layoutToken) return;
+      const vp = page.getViewport({ scale: state.scale });
+      const dpr = window.devicePixelRatio || 1;
+      const c = document.createElement("canvas");
+      c.width = Math.floor(vp.width * dpr); c.height = Math.floor(vp.height * dpr);
+      c.style.width = vp.width + "px"; c.style.height = vp.height + "px";
+      const ctx = c.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      if (token !== state.layoutToken) return;
+      const ph = wrap.querySelector(".ph"); if (ph) ph.remove();
+      wrap.prepend(c);
     }
+
+    function layout(keepPage) {
+      if (!state.pdf) return;
+      const token = ++state.layoutToken;
+      if (state.observer) state.observer.disconnect();
+      scroll.append(boxEl);  // park the box while pages are rebuilt
+      pagesEl.textContent = "";
+      state.scale = state.zoom || fitScale();
+      state.observer = new IntersectionObserver((entries) => {
+        entries.forEach((e) => { if (e.isIntersecting) renderInto(e.target, token); });
+      }, { root: scroll, rootMargin: "800px 0px" });
+      state.sizes.forEach((s, i) => {
+        const wrap = document.createElement("div");
+        wrap.className = "pdf-page";
+        wrap.dataset.page = String(i + 1);
+        wrap.style.width = s.w * state.scale + "px"; wrap.style.height = s.h * state.scale + "px";
+        const ph = document.createElement("div"); ph.className = "ph"; ph.textContent = `Page ${i + 1}`;
+        wrap.append(ph);
+        pagesEl.append(wrap);
+        state.observer.observe(wrap);
+      });
+      pagesEl.classList.toggle("drawable", state.mode === "visual");
+      drawBox(); updatePageNav();
+      if (keepPage) scrollToPage(keepPage, false);
+    }
+
+    function scrollToPage(n, smooth) {
+      if (!state.pdf) return;
+      n = clamp(Math.round(n) || 1, 1, state.pageCount);
+      const el = pageWrap(n);
+      if (el) scroll.scrollTo({ top: el.offsetTop - 12, behavior: smooth ? "smooth" : "auto" });
+      state.pageNum = n; updatePageNav();
+    }
+
+    scroll.addEventListener("scroll", () => {
+      if (!state.pdf) return;
+      const mark = scroll.scrollTop + scroll.clientHeight / 3;
+      let n = 1;
+      for (const el of pagesEl.children) { if (el.offsetTop <= mark) n = +el.dataset.page; else break; }
+      if (n !== state.pageNum) { state.pageNum = n; updatePageNav(); }
+    });
+
     function updatePageNav() {
       const has = !!state.pdf;
       const inp = $("#page-input");
@@ -223,79 +286,86 @@
       ["#zoom-in", "#zoom-out", "#zoom-fit"].forEach((s) => { $(s).disabled = !has; });
       $("#zoom-info").textContent = state.zoom ? Math.round(state.zoom * 100) + "%" : "Fit";
     }
-    function goToPage(n) {
-      if (!state.pdf) return;
-      n = clamp(Math.round(n) || 1, 1, state.pageCount);
-      if (n !== state.pageNum) { state.pageNum = n; scroll.scrollTop = 0; renderPage(); } else updatePageNav();
-    }
-    $("#prev-page").addEventListener("click", () => goToPage(state.pageNum - 1));
-    $("#next-page").addEventListener("click", () => goToPage(state.pageNum + 1));
-    $("#goto-form").addEventListener("submit", (e) => { e.preventDefault(); goToPage(+$("#page-input").value); $("#page-input").blur(); });
-    $("#page-input").addEventListener("change", () => goToPage(+$("#page-input").value));
-    $("#zoom-in").addEventListener("click", () => { state.zoom = nextZoom(state.zoom || state.fitScale, +1); renderPage(); });
-    $("#zoom-out").addEventListener("click", () => { state.zoom = nextZoom(state.zoom || state.fitScale, -1); renderPage(); });
-    $("#zoom-fit").addEventListener("click", () => { state.zoom = null; renderPage(); });
-    let resizeT; window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(renderPage, 200); });
+    $("#prev-page").addEventListener("click", () => scrollToPage(state.pageNum - 1, true));
+    $("#next-page").addEventListener("click", () => scrollToPage(state.pageNum + 1, true));
+    $("#goto-form").addEventListener("submit", (e) => { e.preventDefault(); scrollToPage(+$("#page-input").value, true); $("#page-input").blur(); });
+    $("#page-input").addEventListener("change", () => scrollToPage(+$("#page-input").value, true));
+    $("#zoom-in").addEventListener("click", () => { state.zoom = nextZoom(state.zoom || fitScale(), +1); layout(state.pageNum); });
+    $("#zoom-out").addEventListener("click", () => { state.zoom = nextZoom(state.zoom || fitScale(), -1); layout(state.pageNum); });
+    $("#zoom-fit").addEventListener("click", () => { state.zoom = null; layout(state.pageNum); });
+    let resizeT; window.addEventListener("resize", () => {
+      if (state.zoom) return;
+      clearTimeout(resizeT); resizeT = setTimeout(() => layout(state.pageNum), 200);
+    });
 
-    // ---------------- signature box (stored as fractions of the page)
-    const cw = () => canvas.clientWidth, ch = () => canvas.clientHeight;
+    // ---------------- signature box (fractions of its page, which is state.boxPage)
     function drawBox() {
-      if (!state.box || state.mode !== "visual") { boxEl.style.display = "none"; updateVisualInfo(); updateSubmit(); return; }
-      const b = state.box;
-      Object.assign(boxEl.style, { display: "block", left: b.x * cw() + "px", top: b.y * ch() + "px", width: b.w * cw() + "px", height: b.h * ch() + "px" });
+      const wrap = state.box && state.boxPage ? pageWrap(state.boxPage) : null;
+      if (!wrap || state.mode !== "visual") {
+        boxEl.style.display = "none"; updateVisualInfo(); updateSubmit(); return;
+      }
+      if (boxEl.parentNode !== wrap) wrap.append(boxEl);
+      const b = state.box, W = wrap.clientWidth, H = wrap.clientHeight;
+      Object.assign(boxEl.style, { display: "block", left: b.x * W + "px", top: b.y * H + "px", width: b.w * W + "px", height: b.h * H + "px" });
       updateVisualInfo(); updateSubmit();
     }
     function updateVisualInfo() {
       const el = $("#visual-info");
-      if (!state.box || !state.pagePt) { el.textContent = "No box drawn yet."; return; }
-      const b = state.box, p = state.pagePt;
-      el.textContent = `Page ${state.pageNum}: ${Math.round(b.w * p.w)} × ${Math.round(b.h * p.h)} pt at x=${Math.round(b.x * p.w)}, y=${Math.round(b.y * p.h)} pt from top-left.`;
+      if (!state.box || !state.boxPage) { el.textContent = "No box drawn yet."; return; }
+      const b = state.box, p = state.sizes[state.boxPage - 1];
+      el.textContent = `Page ${state.boxPage}: ${Math.round(b.w * p.w)} × ${Math.round(b.h * p.h)} pt at x=${Math.round(b.x * p.w)}, y=${Math.round(b.y * p.h)} pt from top-left.`;
     }
-    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
-    function localPoint(e) {
-      const r = canvas.getBoundingClientRect();
+    function localPoint(e, wrap) {
+      const r = wrap.getBoundingClientRect();
       return { x: clamp((e.clientX - r.left) / r.width, 0, 1), y: clamp((e.clientY - r.top) / r.height, 0, 1) };
     }
     let drag = null;
-    stage.addEventListener("pointerdown", (e) => {
-      if (state.mode !== "visual" || !state.pdf) return;
+    pagesEl.addEventListener("pointerdown", (e) => {
+      if (state.mode !== "visual" || !state.pdf || e.button > 0) return;
+      const onBox = boxEl.contains(e.target);
+      const wrap = onBox ? pageWrap(state.boxPage) : e.target.closest(".pdf-page");
+      if (!wrap) return;
+      // Touch: drawing would fight with scrolling, so only move/resize the box by touch.
+      if (e.pointerType === "touch" && !onBox) return;
       e.preventDefault();
-      const p = localPoint(e);
-      if (e.target.classList.contains("handle")) drag = { kind: "resize", start: p, orig: { ...state.box } };
-      else if (e.target === boxEl || boxEl.contains(e.target)) drag = { kind: "move", start: p, orig: { ...state.box } };
-      else { drag = { kind: "draw", start: p }; state.box = { x: p.x, y: p.y, w: 0, h: 0 }; }
-      stage.setPointerCapture(e.pointerId);
+      const p = localPoint(e, wrap);
+      if (e.target.classList.contains("handle")) drag = { kind: "resize", wrap, start: p, orig: { ...state.box } };
+      else if (onBox) drag = { kind: "move", wrap, start: p, orig: { ...state.box } };
+      else {
+        drag = { kind: "draw", wrap, start: p };
+        state.boxPage = +wrap.dataset.page;
+        state.box = { x: p.x, y: p.y, w: 0, h: 0 };
+      }
+      pagesEl.setPointerCapture(e.pointerId);
     });
-    stage.addEventListener("pointermove", (e) => {
+    pagesEl.addEventListener("pointermove", (e) => {
       if (!drag) return;
-      const p = localPoint(e), s = drag.start;
+      const p = localPoint(e, drag.wrap), s = drag.start, o = drag.orig;
       if (drag.kind === "draw") {
         state.box = { x: Math.min(s.x, p.x), y: Math.min(s.y, p.y), w: Math.abs(p.x - s.x), h: Math.abs(p.y - s.y) };
       } else if (drag.kind === "move") {
-        const o = drag.orig;
         state.box = { ...o, x: clamp(o.x + p.x - s.x, 0, 1 - o.w), y: clamp(o.y + p.y - s.y, 0, 1 - o.h) };
       } else {
-        const o = drag.orig;
         state.box = { ...o, w: clamp(o.w + p.x - s.x, 0.02, 1 - o.x), h: clamp(o.h + p.y - s.y, 0.015, 1 - o.y) };
       }
       drawBox();
     });
     const endDrag = () => {
-      if (drag && drag.kind === "draw" && state.box && (state.box.w < 0.02 || state.box.h < 0.015)) state.box = null;
+      if (drag && drag.kind === "draw" && state.box && (state.box.w < 0.02 || state.box.h < 0.015)) { state.box = null; state.boxPage = null; }
       drag = null; drawBox();
     };
-    stage.addEventListener("pointerup", endDrag);
-    stage.addEventListener("pointercancel", endDrag);
-    $("#clear-box").addEventListener("click", () => { state.box = null; drawBox(); });
+    pagesEl.addEventListener("pointerup", endDrag);
+    pagesEl.addEventListener("pointercancel", endDrag);
+    $("#clear-box").addEventListener("click", () => { state.box = null; state.boxPage = null; drawBox(); });
     $$(".size-preset").forEach((b) => b.addEventListener("click", () => {
-      if (!state.pagePt) return;
-      const w = Math.min(1, +b.dataset.w / state.pagePt.w), h = Math.min(1, +b.dataset.h / state.pagePt.h);
-      const m = 36;
-      if (state.box) {
-        state.box = { x: clamp(state.box.x, 0, 1 - w), y: clamp(state.box.y, 0, 1 - h), w, h };
-      } else {
-        state.box = { x: clamp(1 - w - m / state.pagePt.w, 0, 1 - w), y: clamp(1 - h - m / state.pagePt.h, 0, 1 - h), w, h };
-      }
+      if (!state.pdf) return;
+      const pg = state.box ? state.boxPage : state.pageNum;  // no box yet: use the page in view
+      const sz = state.sizes[pg - 1];
+      const w = Math.min(1, +b.dataset.w / sz.w), h = Math.min(1, +b.dataset.h / sz.h), m = 36;
+      state.box = state.box
+        ? { x: clamp(state.box.x, 0, 1 - w), y: clamp(state.box.y, 0, 1 - h), w, h }
+        : { x: clamp(1 - w - m / sz.w, 0, 1 - w), y: clamp(1 - h - m / sz.h, 0, 1 - h), w, h };
+      state.boxPage = pg;
       drawBox();
     }));
 
@@ -303,14 +373,14 @@
     const submitBtn = $("#submit-btn"), submitMsg = $("#submit-msg");
     function updateSubmit() {
       let ok = state.files.length > 0;
-      if (state.mode === "visual") ok = ok && !!state.box && !!state.pdf;
+      if (state.mode === "visual") ok = ok && !!state.box && !!state.boxPage && !!state.pdf;
       submitBtn.disabled = !ok;
     }
     function collectParams() {
       const reason = $("#reason").value.trim(), location = $("#location").value.trim();
       if (state.mode === "visual") {
         const b = state.box;
-        return { page_number: state.pageNum, x_pct: +b.x.toFixed(6), y_pct: +b.y.toFixed(6), w_pct: +b.w.toFixed(6), h_pct: +b.h.toFixed(6), reason, location };
+        return { page_number: state.boxPage, x_pct: +b.x.toFixed(6), y_pct: +b.y.toFixed(6), w_pct: +b.w.toFixed(6), h_pct: +b.h.toFixed(6), reason, location };
       }
       if (state.mode === "preset") {
         return { pages: pPages.value, page_list: $("#p-pagelist").value.trim(), position: pPos.value,
@@ -333,7 +403,7 @@
         const failed = data.jobs.filter((j) => j.status === "FAILED");
         if (failed.length) showMsg(submitMsg, `${data.jobs.length - failed.length} queued, ${failed.length} rejected: ` + failed.map((j) => `${j.filename}: ${j.error}`).join(" | "), "error");
         else showMsg(submitMsg, `${data.jobs.length} document(s) queued for signing.`, "ok");
-        fileInput.value = ""; setFiles([]); state.box = null; drawBox();
+        fileInput.value = ""; setFiles([]);
         refreshJobs();
       } catch (ex) {
         showMsg(submitMsg, ex.message, "error");
@@ -456,7 +526,7 @@
 
     function fitScale() {
       const maxW = Math.max(...v.sizes.map((s) => s.w), 1);
-      return Math.min(1.5, Math.max(0.3, (scroller.clientWidth - 40) / maxW));
+      return Math.min(1.5, Math.max(0.3, (scroller.clientWidth - 32 - 20) / maxW));
     }
 
     function message(text, cls) {

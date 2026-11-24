@@ -285,10 +285,13 @@ If the token is unplugged and replugged, the worker reconnects on its next healt
 
 1. **Upload** one or more PDFs (up to 20 per upload, 25 MB each by default).
 2. **Choose a placement mode:**
-   * **Visual:** the first PDF is shown with PDF.js. Drag on the page to draw the box, drag it
-     to move it, and drag the corner handle to resize it. Size presets: Small 150×50, Medium
-     200×70, Large 250×90 pt. The box goes on the page currently shown, at the same relative
-     position in every uploaded file.
+   * **Visual:** the whole first PDF is shown in a scrolling preview. Scroll (or type a page
+     number) to the page you want, drag on it to draw the box, drag the box to move it, and
+     drag the corner handle to resize it. Size presets: Small 150×50, Medium 200×70, Large
+     250×90 pt (with no box yet, they place one on the page in view). The box is signed on the
+     page you drew it on, at the same relative position in every uploaded file. On phones and
+     tablets, use a size preset to create the box and drag it into place, since a finger drag
+     on the page scrolls.
    * **Page & Position:** first, last, all, or specific pages (`8`, `1,3,8`, `2-5`), a corner or
      bottom-centre preset (or custom X-from-left / Y-from-bottom margins), and width/height in
      points (72 pt = 1 inch; A4 = 595 × 842 pt).
