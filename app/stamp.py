@@ -235,12 +235,23 @@ def _image_xobject(writer, logo: LogoImage):
     return img(logo.rgb, "/DeviceRGB", extra)
 
 
-def _logo_commands(logo: LogoImage, width: float, height: float, opacity: float) -> list[bytes]:
-    """Centre the logo in the box ('contain' fit, 90% of the box), faded to `opacity`."""
-    scale = min(width * 0.9 / logo.width, height * 0.9 / logo.height)
-    w, h = logo.width * scale, logo.height * scale
-    x, y = (width - w) / 2, (height - h) / 2
-    return [b"q", f"/GSLogo gs".encode(), f"{w:.2f} 0 0 {h:.2f} {x:.2f} {y:.2f} cm".encode(), b"/ImLogo Do", b"Q"]
+def _logo_commands(logo: LogoImage, width: float, height: float, align: str = "center") -> list[bytes]:
+    """Faded watermark (opacity comes from the /GSLogo graphics state).
+
+    align "center": centred, 'contain' fit in 90% of the box.
+    align "left":   anchored at the left edge, full box height (minus padding), up to 45%
+                    of the width, vertically centred. The text layout is not changed.
+    """
+    if align == "left":
+        pad = max(2.0, height * PAD)
+        scale = min((width - 2 * pad) * 0.45 / logo.width, (height - 2 * pad) / logo.height)
+        w, h = logo.width * scale, logo.height * scale
+        x, y = pad, (height - h) / 2
+    else:
+        scale = min(width * 0.9 / logo.width, height * 0.9 / logo.height)
+        w, h = logo.width * scale, logo.height * scale
+        x, y = (width - w) / 2, (height - h) / 2
+    return [b"q", b"/GSLogo gs", f"{w:.2f} 0 0 {h:.2f} {x:.2f} {y:.2f} cm".encode(), b"/ImLogo Do", b"Q"]
 
 
 def _logo_left_placement(logo: LogoImage, width: float, height: float) -> tuple[float, float, float, float]:
@@ -253,13 +264,18 @@ def _logo_left_placement(logo: LogoImage, width: float, height: float) -> tuple[
     return pad, (height - h) / 2, w, h
 
 
+LOGO_POSITIONS = {"watermark-left", "watermark-center", "center", "beside"}
+
+
 def make_xobject(width: float, height: float, *, writer=None, logo_path: str = "",
-                 logo_opacity: float = 0.15, logo_position: str = "left", **kwargs):
+                 logo_opacity: float = 0.2, logo_position: str = "watermark-left", **kwargs):
     """Build the pyHanko form XObject (StreamObject) for the appearance.
 
-    logo_position "left": the logo gets its own space at the left edge, drawn at full
-    strength, and the text columns shift right so nothing overlaps.
-    logo_position "center": faded watermark centred behind the text (logo_opacity).
+    logo_position:
+      "watermark-left"   faded watermark at the left edge, behind the text (default)
+      "watermark-center" faded watermark centred behind the text ("center" is an alias)
+      "beside"           full-strength logo in its own space at the left; text shifts right
+    logo_opacity applies to the two watermark modes.
     """
     from pyhanko.pdf_utils import generic
     from pyhanko.pdf_utils.writer import init_xobject_dictionary
@@ -287,22 +303,30 @@ def make_xobject(width: float, height: float, *, writer=None, logo_path: str = "
         content = build_appearance_stream(width, height, **kwargs)
         return init_xobject_dictionary(content, width, height, resources)
 
+    position = (logo_position or "watermark-left").strip().lower()
+    if position == "left":  # earlier name of "beside"
+        position = "beside"
+    if position not in LOGO_POSITIONS:
+        position = "watermark-left"
+
     resources[n("/XObject")] = generic.DictionaryObject({n("/ImLogo"): _image_xobject(writer, logo)})
-    if (logo_position or "left").lower() == "center":
-        opacity = min(max(float(logo_opacity), 0.0), 1.0)
-        resources[n("/ExtGState")] = generic.DictionaryObject({
-            n("/GSLogo"): generic.DictionaryObject({
-                n("/Type"): n("/ExtGState"),
-                n("/ca"): generic.FloatObject(opacity),
-                n("/CA"): generic.FloatObject(opacity),
-            })
-        })
-        # logo first, so the text is drawn on top of it
-        content = (NL.join(_logo_commands(logo, width, height, opacity)) + NL
-                   + build_appearance_stream(width, height, **kwargs))
-    else:
+    if position == "beside":
         x, y, w, h = _logo_left_placement(logo, width, height)
         logo_cmds = [b"q", f"{w:.2f} 0 0 {h:.2f} {x:.2f} {y:.2f} cm".encode(), b"/ImLogo Do", b"Q"]
         content = (NL.join(logo_cmds) + NL
                    + build_appearance_stream(width, height, text_x0=w + width * GAP_SHARE, **kwargs))
+        return init_xobject_dictionary(content, width, height, resources)
+
+    opacity = min(max(float(logo_opacity), 0.0), 1.0)
+    resources[n("/ExtGState")] = generic.DictionaryObject({
+        n("/GSLogo"): generic.DictionaryObject({
+            n("/Type"): n("/ExtGState"),
+            n("/ca"): generic.FloatObject(opacity),
+            n("/CA"): generic.FloatObject(opacity),
+        })
+    })
+    align = "left" if position == "watermark-left" else "center"
+    # logo first, so the text is drawn on top of it
+    content = (NL.join(_logo_commands(logo, width, height, align)) + NL
+               + build_appearance_stream(width, height, **kwargs))
     return init_xobject_dictionary(content, width, height, resources)

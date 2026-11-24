@@ -321,21 +321,27 @@ Location if given) on the right, with no border. `SIGN_STAMP_STYLE=classic` in `
 a boxed text stamp instead. Rotated and cropped pages are handled: the stamp is drawn upright
 where you placed it.
 
-**Logo.** The logo in `branding\logo.png` is shown in the stamp (`SIGN_STAMP_LOGO=auto`,
-the default). By default it sits in its own space at the left edge, in full colour, with the
-name and details beside it, so nothing overlaps (`SIGN_STAMP_LOGO_POSITION=left`). Set
-`SIGN_STAMP_LOGO_POSITION=center` for a faded watermark behind the text instead;
-`SIGN_STAMP_LOGO_OPACITY` (0.0 to 1.0) then sets how faded it is. To use a different image,
-replace that file or point `.env` at another one (a PNG with a transparent background works
-best; JPEG also works). Set `SIGN_STAMP_LOGO=` (blank) to turn the logo off.
+**Logo watermark.** The logo in `branding\logo.png` is shown in the stamp
+(`SIGN_STAMP_LOGO=auto`, the default). `SIGN_STAMP_LOGO_POSITION` picks where:
+
+| Value | Look |
+|---|---|
+| `watermark-left` (default) | Faded watermark at the left edge, behind the name; the text layout is unchanged |
+| `watermark-center` | Faded watermark centred behind the text |
+| `beside` | Full-colour logo in its own space at the left; the text moves right |
+
+`SIGN_STAMP_LOGO_OPACITY` (0.0 invisible to 1.0 solid, default 0.2) sets how faded the
+watermark is. To use a different image, replace that file or point `.env` at another one (a
+PNG with a transparent background works best; JPEG also works). Set `SIGN_STAMP_LOGO=`
+(blank) to turn the logo off.
 
 ```ini
 SIGN_STAMP_LOGO=auto
-SIGN_STAMP_LOGO_POSITION=left
+SIGN_STAMP_LOGO_POSITION=watermark-left
+SIGN_STAMP_LOGO_OPACITY=0.2
 ```
 
-The logo is scaled to fit (at most 30% of the stamp width when on the left), and large images
-are downscaled. Restart the service
+The logo is scaled to fit the stamp, and large images are downscaled. Restart the service
 after changing it. If the file is missing or unreadable, documents are still signed without the
 watermark, and `logs\app.log` shows a warning. Use only artwork you have the right to use. Other
 companies' logos, such as Adobe's, are their trademarks.
