@@ -306,12 +306,13 @@ Location if given) on the right, with no border. `SIGN_STAMP_STYLE=classic` in `
 a boxed text stamp instead. Rotated and cropped pages are handled: the stamp is drawn upright
 where you placed it.
 
-**Logo watermark (optional).** To show your own logo faded behind the stamp text, copy the
-image onto the DSC PC (a PNG with a transparent background works best; JPEG also works) and
-set it in `.env`:
+**Logo watermark.** The logo in `branding\logo.png` is drawn faded behind the stamp text
+(`SIGN_STAMP_LOGO=auto`, the default). To use a different image, replace that file or point
+`.env` at another one (a PNG with a transparent background works best; JPEG also works). Set
+`SIGN_STAMP_LOGO=` (blank) to turn the watermark off.
 
 ```ini
-SIGN_STAMP_LOGO=C:\dsc-signer\branding\logo.png
+SIGN_STAMP_LOGO=auto
 SIGN_STAMP_LOGO_OPACITY=0.15
 ```
 

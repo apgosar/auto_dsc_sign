@@ -42,9 +42,10 @@ class Settings(BaseSettings):
     # "acrobat": two-column stamp like Adobe Acrobat (name left, details right, no border)
     # "classic": single text block with a border
     SIGN_STAMP_STYLE: str = "acrobat"
-    # Optional watermark image (PNG with transparency works best) drawn faded behind the
-    # stamp text. Only used with SIGN_STAMP_STYLE=acrobat. Blank = no watermark.
-    SIGN_STAMP_LOGO: str = ""
+    # Watermark image (PNG with transparency works best) drawn faded behind the stamp text.
+    # Only used with SIGN_STAMP_STYLE=acrobat. "auto" = branding/logo.png if it exists,
+    # a file path = that image, blank = no watermark.
+    SIGN_STAMP_LOGO: str = "auto"
     SIGN_STAMP_LOGO_OPACITY: float = Field(default=0.15, ge=0.0, le=1.0)
     MAX_SIGNATURES_PER_DOC: int = 50
 
@@ -85,6 +86,17 @@ class Settings(BaseSettings):
         v = v.strip().lower()
         if v not in {"pkcs11", "pkcs12"}:
             raise ValueError("SIGNER_BACKEND must be 'pkcs11' or 'pkcs12'")
+        return v
+
+    @property
+    def stamp_logo_path(self) -> str:
+        """Resolved watermark path ('' = none)."""
+        v = self.SIGN_STAMP_LOGO.strip().strip("'\"")
+        if v.lower() == "auto":
+            p = BASE_DIR / "branding" / "logo.png"
+            return str(p) if p.is_file() else ""
+        if v.lower() in ("", "none", "off", "false"):
+            return ""
         return v
 
     @property
