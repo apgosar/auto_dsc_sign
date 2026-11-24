@@ -81,7 +81,24 @@ if ($existing) {
     if ($LASTEXITCODE -ne 0) { throw "nssm install failed" }
 }
 
-$appArgs = "-m uvicorn app.main:app --host 127.0.0.1 --port $Port --workers 1 --no-server-header"
+function Get-DotEnv([string]$Key) {
+    $m = Select-String -Path (Join-Path $Root '.env') -Pattern "^\s*$([regex]::Escape($Key))\s*=\s*'?([^'#]*?)'?\s*$" -ErrorAction SilentlyContinue
+    if ($m) { return $m.Matches[0].Groups[1].Value.Trim() }
+    return ''
+}
+
+# HOST=127.0.0.1 -> only this PC (e.g. behind a tunnel); HOST=0.0.0.0 -> reachable from the LAN
+$HostAddr = Get-DotEnv 'HOST'
+if (-not $HostAddr) { $HostAddr = '127.0.0.1' }
+$SslCert = Get-DotEnv 'SSL_CERTFILE'
+$SslKey = Get-DotEnv 'SSL_KEYFILE'
+$UseTls = [bool]($SslCert -and $SslKey)
+if ($UseTls) {
+    foreach ($f in @($SslCert, $SslKey)) { if (-not (Test-Path $f)) { throw "SSL file not found: $f (see INSTALL.md, LAN setup)" } }
+}
+
+$appArgs = "-m uvicorn app.main:app --host $HostAddr --port $Port --workers 1 --no-server-header"
+if ($UseTls) { $appArgs += " --ssl-certfile `"$SslCert`" --ssl-keyfile `"$SslKey`"" }
 & $Nssm set $ServiceName Application $VenvPy | Out-Null
 & $Nssm set $ServiceName AppParameters $appArgs | Out-Null
 & $Nssm set $ServiceName AppDirectory $Root | Out-Null
@@ -108,14 +125,40 @@ if ($RunAsUser) {
     & $Nssm set $ServiceName ObjectName LocalSystem | Out-Null
 }
 
+# Shared on the LAN: allow the port through Windows Firewall (Private/Domain networks only)
+$RuleName = "DSC Signer (TCP $Port)"
+if ($HostAddr -ne '127.0.0.1' -and $HostAddr -ne 'localhost') {
+    if (-not (Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -DisplayName $RuleName -Direction Inbound -Protocol TCP -LocalPort $Port `
+            -Action Allow -Profile Private, Domain | Out-Null
+        Write-Host "Firewall: allowed inbound TCP $Port on Private/Domain networks." -ForegroundColor Green
+    }
+    $profiles = Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { $_.NetworkCategory -eq 'Public' }
+    foreach ($p in $profiles) {
+        Write-Warning "Network '$($p.Name)' ($($p.InterfaceAlias)) is set to Public, so other PCs can't connect. If it is your office/home network, run:  Set-NetConnectionProfile -InterfaceAlias '$($p.InterfaceAlias)' -NetworkCategory Private"
+    }
+}
+
 & $Nssm start $ServiceName
 Start-Sleep -Seconds 5
 Get-Service $ServiceName | Format-Table -AutoSize Name, Status, StartType
 
+$Scheme = if ($UseTls) { 'https' } else { 'http' }
 try {
-    $r = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/healthz" -TimeoutSec 10
+    if ($UseTls) {
+        # self-signed certificate: skip validation for this local check only
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    }
+    $r = Invoke-WebRequest -UseBasicParsing -Uri "${Scheme}://127.0.0.1:$Port/healthz" -TimeoutSec 10
     Write-Host "Health check OK: $($r.Content)" -ForegroundColor Green
-    Write-Host "Open http://127.0.0.1:$Port in a browser on this machine."
+    Write-Host "On this PC:  ${Scheme}://127.0.0.1:$Port"
+    if ($HostAddr -ne '127.0.0.1' -and $HostAddr -ne 'localhost') {
+        $ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and $_.PrefixOrigin -ne 'WellKnown' }
+        foreach ($ip in $ips) { Write-Host "On the LAN:  ${Scheme}://$($ip.IPAddress):$Port   ($($ip.InterfaceAlias))" -ForegroundColor Cyan }
+        Write-Host "             ${Scheme}://$($env:COMPUTERNAME):$Port" -ForegroundColor Cyan
+    }
 } catch {
     Write-Warning "Health check failed. See $LogDir\service.log and $LogDir\app.log"
 }

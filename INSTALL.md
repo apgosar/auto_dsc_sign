@@ -9,7 +9,8 @@ fresh Windows install with nothing on it. Run every command in the same
 * Windows 10 (21H2 or later) or Windows 11, **64-bit**, with an administrator account
 * Internet access
 * The ePass 2003 token, its **user PIN**, and the driver download link from your DSC provider
-* A domain on Cloudflare (free plan is fine) for remote access
+* Only for access from outside your network: a domain on Cloudflare (free plan is fine). Users
+  on the same office or home network don't need this (Step 11A).
 * Access to the GitHub repo <https://github.com/apgosar/auto_dsc_sign>
 
 The app goes in **`C:\dsc-signer`**. Keep that path: it has no spaces and sits outside any
@@ -291,7 +292,85 @@ on AC power. Keep the PC plugged in. Optionally, in **Device Manager → Univers
 controllers → each USB Root Hub → Power Management**, untick *Allow the computer to turn off
 this device to save power*.
 
-## Step 11: Publish it with a Cloudflare Tunnel
+## Step 11: Let other people reach the app
+
+Pick **one**:
+
+* **11A: Same office or home network only.** No domain, no Cloudflare, nothing to buy. Users
+  open the app at `https://<DSC-PC-name>:8000` from their own PCs on the same network.
+* **11B: From anywhere (internet).** Uses a Cloudflare Tunnel and a domain whose DNS is on
+  Cloudflare.
+
+### Step 11A: Share on the local network (LAN)
+
+1. Give the DSC PC a fixed address so users' bookmarks keep working. In your router's admin
+   page, add a **DHCP reservation** (sometimes called "static lease") for this PC. Or simply use
+   the PC's name (shown by the next command) instead of an IP address.
+
+   ```powershell
+   $env:COMPUTERNAME
+   ```
+
+2. Create the HTTPS certificate. HTTPS is needed so passwords aren't sent in plain text across
+   the network and so the login cookie works:
+
+   ```powershell
+   .venv\Scripts\python.exe scripts\make_lan_cert.py
+   ```
+
+   It prints two lines starting with `SSL_CERTFILE=` and `SSL_KEYFILE=`.
+
+3. Open `.env` and set these lines (the two SSL lines are the ones the script printed):
+
+   ```powershell
+   notepad C:\dsc-signer\.env
+   ```
+
+   ```ini
+   HOST=0.0.0.0
+   PORT=8000
+   SSL_CERTFILE=C:\dsc-signer\certs\server.crt
+   SSL_KEYFILE=C:\dsc-signer\certs\server.key
+   COOKIE_SECURE=true
+   ```
+
+4. Re-run the service installer. It switches the service to the network address, turns on
+   HTTPS, opens TCP port 8000 in Windows Firewall (Private and Domain networks only), and prints
+   the addresses users should open:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_service.ps1
+   ```
+
+   If it warns that the network is **Public**, other PCs can't connect yet. On your own office
+   or home network, mark it Private (use the interface name the warning shows):
+
+   ```powershell
+   Set-NetConnectionProfile -InterfaceAlias 'Wi-Fi' -NetworkCategory Private
+   ```
+
+5. On another PC on the same network, open `https://<DSC-PC-name>:8000` (or
+   `https://<its-IP>:8000`). The browser warns that the connection isn't private, because the
+   certificate is self-made. Click **Advanced → Continue**. To make the warning disappear for
+   good, copy `C:\dsc-signer\certs\server.crt` to each user's PC and run this there in an
+   Administrator PowerShell:
+
+   ```powershell
+   Import-Certificate -FilePath .\server.crt -CertStoreLocation Cert:\LocalMachine\Root
+   ```
+
+   Then restart that browser. Copy only `server.crt`; never copy `server.key`.
+
+6. In the Admin Panel (Step 12), whitelist your network, e.g. `192.168.1.0/24`, and turn on
+   **Enforce whitelist**, so only PCs on your network can even see the login page.
+
+If the PC's IP address changes, re-run `make_lan_cert.py` and `install_service.ps1` (or use the
+PC name, which doesn't change). Skip Step 11B.
+
+### Step 11B: Publish it with a Cloudflare Tunnel
+
+Keep `HOST=127.0.0.1` in `.env` for this option: cloudflared connects from the same PC, and
+nothing is opened on the local network.
 
 1. Sign in at <https://dash.cloudflare.com> and open **Zero Trust** (first time: pick a team
    name and the free plan).
@@ -381,6 +460,7 @@ Then delete `C:\dsc-signer`, and remove the tunnel in the Cloudflare dashboard.
 | Badge `NO_TOKEN` | Replug the token, run `list_token.py`, try `install_service.ps1 -RunAsUser` |
 | Badge `PIN_ERROR` | Fix `TOKEN_PIN` in `.env`, then `Restart-Service DSCSigner` |
 | Remote URL shows a Cloudflare error 1033/502 | `Get-Service cloudflared, DSCSigner`. Both must be *Running*; the tunnel URL must be `127.0.0.1:8000` |
+| Other PCs on the network can't open the app | Check `.env` has `HOST=0.0.0.0`, re-run `install_service.ps1`, make sure the network is Private (Step 11A.4), and use `https://` |
 | Login keeps returning to the login page | Use the `https://` tunnel URL or `http://127.0.0.1:8000`, not the PC's LAN IP |
 
 More detail: [README.md](README.md), sections 2, 5, 6 and 11.

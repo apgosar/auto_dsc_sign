@@ -201,6 +201,12 @@ Restart the service after editing `.env`.
 
 ## 6. Expose it with Cloudflare Tunnel
 
+> **Only users on the same network?** You don't need Cloudflare or a domain. Set
+> `HOST=0.0.0.0`, create an HTTPS certificate with `scripts\make_lan_cert.py`, put its paths in
+> `SSL_CERTFILE` / `SSL_KEYFILE`, and re-run `install_service.ps1`, which also opens the
+> firewall port. Users then open `https://<DSC-PC-name>:8000`. Full steps:
+> [INSTALL.md, Step 11A](INSTALL.md#step-11a-share-on-the-local-network-lan).
+
 You need a domain on Cloudflare (free plan is fine). The tunnel makes an outbound connection, so
 no router port forwarding is needed and the app stays bound to `127.0.0.1`.
 
