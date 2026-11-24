@@ -152,7 +152,7 @@
       state.mode = b.dataset.mode;
       $$(".tab-btn").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
       $$(".mode-panel").forEach((p) => p.classList.toggle("hidden", p.dataset.mode !== state.mode));
-      $("#pdf-pages").classList.toggle("drawable", state.mode === "visual");
+      $("#pdf-pages").classList.toggle("drawable", state.mode === "visual" && !state.signedJob);
       drawBox();
       updateSubmit();
     }));
@@ -188,16 +188,21 @@
       pagesEl.textContent = ""; pagesEl.classList.add("hidden");
       $("#pdf-empty").classList.remove("hidden");
       $("#preview-name").textContent = "";
+      state.signedJob = null; showSignedBar();
       updatePageNav(); drawBox();
     }
 
-    async function loadPreview(file) {
+    function loadPreview(file) { return loadDoc(() => file.arrayBuffer(), file.name, null); }
+
+    // Loads a PDF into the preview. signedJob = null: the upload being placed (box drawing on).
+    // signedJob = a finished job: read-only view of the signed PDF with a Download button.
+    async function loadDoc(getBuf, label, signedJob) {
       if (!window.pdfjsLib) { $("#pdf-empty").textContent = "PDF.js failed to load (check internet access)."; return; }
       clearPreview();
       const token = state.loadToken;
-      $("#pdf-empty").textContent = "Loading preview…";
+      $("#pdf-empty").textContent = signedJob ? "Loading signed PDF…" : "Loading preview…";
       try {
-        const buf = await file.arrayBuffer();
+        const buf = await getBuf();
         const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
         if (token !== state.loadToken) { pdf.destroy(); return; }
         const sizes = [];
@@ -206,15 +211,49 @@
           sizes.push({ w: vp.width, h: vp.height });
         }
         if (token !== state.loadToken) { pdf.destroy(); return; }
-        Object.assign(state, { pdf, sizes, pageCount: pdf.numPages, pageNum: 1 });
-        $("#preview-name").textContent = "· " + file.name;
+        Object.assign(state, { pdf, sizes, pageCount: pdf.numPages, pageNum: 1, signedJob });
+        $("#preview-name").textContent = "· " + label;
+        showSignedBar(signedJob, label);
         $("#pdf-empty").classList.add("hidden"); pagesEl.classList.remove("hidden");
         layout(1);
+        if (signedJob && signedJob.first_signed_page > 1) scrollToPage(signedJob.first_signed_page, false);
       } catch (ex) {
         clearPreview();
-        $("#pdf-empty").textContent = "Could not render this PDF: " + ex.message;
+        $("#pdf-empty").textContent = (signedJob ? "Could not show the signed PDF: " : "Could not render this PDF: ") + ex.message;
       }
     }
+
+    function showSignedBar(job, label) {
+      const bar = $("#signed-bar");
+      bar.classList.toggle("hidden", !job);
+      if (job) {
+        $("#signed-name").textContent = label;
+        $("#signed-download").href = job.download_url;
+      }
+      $("#clear-box").classList.toggle("hidden", !!job);
+      updateSubmit();
+    }
+
+    async function openSigned(job) {
+      // Remember an in-progress placement so "Close" can bring it back.
+      if (!state.signedJob && state.files.length) state.saved = { box: state.box, boxPage: state.boxPage, page: state.pageNum };
+      $("#preview-card").scrollIntoView({ behavior: "smooth", block: "start" });
+      await loadDoc(async () => {
+        const res = await fetch(job.download_url + "?inline=1", { credentials: "same-origin" });
+        if (!res.ok) throw new Error(res.status === 404 ? "the file has expired or was removed." : `server returned ${res.status}.`);
+        return res.arrayBuffer();
+      }, job.filename.replace(/\.pdf$/i, "") + "_signed.pdf", job);
+    }
+
+    $("#signed-back").addEventListener("click", async () => {
+      if (!state.files.length) { clearPreview(); return; }
+      const saved = state.saved; state.saved = null;
+      await loadPreview(state.files[0]);
+      if (saved && saved.box) {
+        state.box = saved.box; state.boxPage = saved.boxPage; drawBox();
+        scrollToPage(saved.boxPage || saved.page, false);
+      }
+    });
 
     async function renderInto(wrap, token) {
       if (wrap.dataset.rendered === "1" || !state.pdf) return;
@@ -253,7 +292,7 @@
         pagesEl.append(wrap);
         state.observer.observe(wrap);
       });
-      pagesEl.classList.toggle("drawable", state.mode === "visual");
+      pagesEl.classList.toggle("drawable", state.mode === "visual" && !state.signedJob);
       drawBox(); updatePageNav();
       if (keepPage) scrollToPage(keepPage, false);
     }
@@ -301,7 +340,7 @@
     // ---------------- signature box (fractions of its page, which is state.boxPage)
     function drawBox() {
       const wrap = state.box && state.boxPage ? pageWrap(state.boxPage) : null;
-      if (!wrap || state.mode !== "visual") {
+      if (!wrap || state.mode !== "visual" || state.signedJob) {
         boxEl.style.display = "none"; updateVisualInfo(); updateSubmit(); return;
       }
       if (boxEl.parentNode !== wrap) wrap.append(boxEl);
@@ -321,7 +360,7 @@
     }
     let drag = null;
     pagesEl.addEventListener("pointerdown", (e) => {
-      if (state.mode !== "visual" || !state.pdf || e.button > 0) return;
+      if (state.signedJob || state.mode !== "visual" || !state.pdf || e.button > 0) return;
       const onBox = boxEl.contains(e.target);
       const wrap = onBox ? pageWrap(state.boxPage) : e.target.closest(".pdf-page");
       if (!wrap) return;
@@ -358,7 +397,7 @@
     pagesEl.addEventListener("pointercancel", endDrag);
     $("#clear-box").addEventListener("click", () => { state.box = null; state.boxPage = null; drawBox(); });
     $$(".size-preset").forEach((b) => b.addEventListener("click", () => {
-      if (!state.pdf) return;
+      if (!state.pdf || state.signedJob) return;
       const pg = state.box ? state.boxPage : state.pageNum;  // no box yet: use the page in view
       const sz = state.sizes[pg - 1];
       const w = Math.min(1, +b.dataset.w / sz.w), h = Math.min(1, +b.dataset.h / sz.h), m = 36;
@@ -370,12 +409,16 @@
     }));
 
     // ---------------- submit
-    const submitBtn = $("#submit-btn"), submitMsg = $("#submit-msg");
+    const submitBtn = $("#submit-btn"), submitMsg = $("#submit-msg"), queueTop = $("#queue-top");
+    let uploading = false;
     function updateSubmit() {
-      let ok = state.files.length > 0;
-      if (state.mode === "visual") ok = ok && !!state.box && !!state.boxPage && !!state.pdf;
+      let ok = state.files.length > 0 && !uploading;
+      if (state.mode === "visual") ok = ok && !!state.box && !!state.boxPage && !!state.pdf && !state.signedJob;
       submitBtn.disabled = !ok;
+      queueTop.disabled = !ok;
+      queueTop.classList.toggle("hidden", !!state.signedJob);
     }
+    queueTop.addEventListener("click", () => submitBtn.click());
     function collectParams() {
       const reason = $("#reason").value.trim(), location = $("#location").value.trim();
       if (state.mode === "visual") {
@@ -396,19 +439,19 @@
       state.files.forEach((f) => fd.append("files", f, f.name));
       fd.append("mode", state.mode);
       fd.append("params", JSON.stringify(collectParams()));
-      submitBtn.disabled = true; submitBtn.textContent = "Uploading…";
+      uploading = true; updateSubmit(); submitBtn.textContent = queueTop.textContent = "Uploading…";
       try {
         const data = await api("/api/jobs", { method: "POST", form: fd });
         data.jobs.filter((j) => j.status !== "FAILED").forEach((j) => watched.add(j.id));
         const failed = data.jobs.filter((j) => j.status === "FAILED");
         if (failed.length) showMsg(submitMsg, `${data.jobs.length - failed.length} queued, ${failed.length} rejected: ` + failed.map((j) => `${j.filename}: ${j.error}`).join(" | "), "error");
         else showMsg(submitMsg, `${data.jobs.length} document(s) queued for signing.`, "ok");
-        fileInput.value = ""; setFiles([]);
+        fileInput.value = ""; state.saved = null; setFiles([]);
         refreshJobs();
       } catch (ex) {
         showMsg(submitMsg, ex.message, "error");
       } finally {
-        submitBtn.textContent = "Queue for signing"; updateSubmit();
+        uploading = false; submitBtn.textContent = queueTop.textContent = "Queue for signing"; updateSubmit();
       }
     });
 
@@ -425,7 +468,7 @@
     const autoBox = $("#auto-preview");
     try { const v = localStorage.getItem("dsc.autoPreview"); if (v !== null) autoBox.checked = v === "1"; } catch (_) {}
     autoBox.addEventListener("change", () => { try { localStorage.setItem("dsc.autoPreview", autoBox.checked ? "1" : "0"); } catch (_) {} });
-    const viewer = createSignedViewer(() => { if (toPreview.length && autoBox.checked) viewer.open(toPreview.shift()); });
+    const viewer = { open: (job) => openSigned(job) };
 
     // Admins only: "All users" shows everyone's documents with an Owner column.
     const allBox = $("#show-all-jobs");
@@ -449,8 +492,12 @@
         if (j.status === "COMPLETED" && j.download_url) { watched.delete(j.id); toPreview.push(j); }
         else if (j.status === "FAILED" || j.status === "EXPIRED") watched.delete(j.id);
       });
-      if (toPreview.length && autoBox.checked && !viewer.isOpen()) viewer.open(toPreview.shift());
-      else if (!autoBox.checked) toPreview.length = 0;
+      if (toPreview.length && autoBox.checked) {
+        // Show the newest finished document. Don't replace a placement the user is working on.
+        const j = toPreview.pop(); toPreview.length = 0;
+        if (!state.files.length) viewer.open(j);
+        else showMsg(submitMsg, `${j.filename} is signed. Click Preview in the queue to check it.`, "ok");
+      } else if (!autoBox.checked) toPreview.length = 0;
       const body = $("#jobs-body");
       body.textContent = "";
       if (!data.jobs.length) {
@@ -501,136 +548,6 @@
     refreshJobs(); refreshToken();
     setInterval(refreshJobs, 3000);
     setInterval(refreshToken, 10000);
-  }
-
-  // ================================================================== SIGNED PDF VIEWER
-  // Continuous-scroll PDF.js viewer in a modal. Pages render lazily as they scroll into view,
-  // so long documents open quickly. Signature widgets are drawn from their appearance streams.
-  function createSignedViewer(onClose) {
-    const modal = $("#signed-modal"), scroller = $("#signed-scroll"), pagesEl = $("#signed-pages");
-    const pageInput = $("#signed-page-input");
-    const v = { pdf: null, job: null, zoom: null, sizes: [], token: 0, observer: null, current: 1 };
-
-    function isOpen() { return !modal.classList.contains("hidden"); }
-
-    function close() {
-      if (!isOpen()) return;
-      modal.classList.add("hidden");
-      document.body.style.overflow = "";
-      v.token++;
-      if (v.observer) v.observer.disconnect();
-      if (v.pdf) { v.pdf.destroy(); v.pdf = null; }
-      pagesEl.textContent = "";
-      onClose && onClose();
-    }
-
-    function fitScale() {
-      const maxW = Math.max(...v.sizes.map((s) => s.w), 1);
-      return Math.min(1.5, Math.max(0.3, (scroller.clientWidth - 32 - 20) / maxW));
-    }
-
-    function message(text, cls) {
-      pagesEl.textContent = "";
-      const p = document.createElement("p"); p.className = "text-sm mt-10 " + (cls || "text-slate-500"); p.textContent = text;
-      pagesEl.append(p);
-    }
-
-    async function renderInto(wrap, token) {
-      if (wrap.dataset.rendered === "1" || !v.pdf) return;
-      wrap.dataset.rendered = "1";
-      const n = +wrap.dataset.page, scale = v.zoom || fitScale();
-      const page = await v.pdf.getPage(n);
-      if (token !== v.token) return;
-      const vp = page.getViewport({ scale });
-      const dpr = window.devicePixelRatio || 1;
-      const c = document.createElement("canvas");
-      c.width = Math.floor(vp.width * dpr); c.height = Math.floor(vp.height * dpr);
-      c.style.width = vp.width + "px"; c.style.height = vp.height + "px";
-      const ctx = c.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      await page.render({ canvasContext: ctx, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.ENABLE }).promise;
-      if (token !== v.token) return;
-      wrap.textContent = ""; wrap.append(c);
-    }
-
-    function layout(keepPage) {
-      const token = ++v.token;
-      if (v.observer) v.observer.disconnect();
-      pagesEl.textContent = "";
-      const scale = v.zoom || fitScale();
-      $("#signed-zoom-info").textContent = v.zoom ? Math.round(v.zoom * 100) + "%" : "Fit";
-      v.observer = new IntersectionObserver((entries) => {
-        entries.forEach((e) => { if (e.isIntersecting) renderInto(e.target, token); });
-      }, { root: scroller, rootMargin: "600px 0px" });
-      v.sizes.forEach((s, i) => {
-        const wrap = document.createElement("div");
-        wrap.className = "bg-white shadow relative flex items-center justify-center text-slate-300 text-sm";
-        wrap.style.width = s.w * scale + "px"; wrap.style.height = s.h * scale + "px";
-        wrap.dataset.page = String(i + 1);
-        wrap.textContent = `Page ${i + 1}`;
-        pagesEl.append(wrap);
-        v.observer.observe(wrap);
-      });
-      if (keepPage) scrollToPage(keepPage, false);
-    }
-
-    function scrollToPage(n, smooth) {
-      n = Math.min(Math.max(Math.round(n) || 1, 1), v.sizes.length || 1);
-      const el = pagesEl.children[n - 1];
-      if (el) scroller.scrollTo({ top: el.offsetTop - 12, behavior: smooth ? "smooth" : "auto" });
-      v.current = n; pageInput.value = n;
-    }
-
-    scroller.addEventListener("scroll", () => {
-      if (!v.sizes.length) return;
-      const mid = scroller.scrollTop + scroller.clientHeight / 3;
-      let n = 1;
-      for (const el of pagesEl.children) { if (el.offsetTop <= mid) n = +el.dataset.page || n; else break; }
-      v.current = n;
-      if (document.activeElement !== pageInput) pageInput.value = n;
-    });
-
-    async function open(job) {
-      if (!window.pdfjsLib) { window.open(job.download_url + "?inline=1", "_blank"); return; }
-      if (isOpen()) close();
-      v.job = job; v.zoom = null; v.sizes = [];
-      $("#signed-title").textContent = job.filename.replace(/\.pdf$/i, "") + "_signed.pdf";
-      $("#signed-download").href = job.download_url;
-      $("#signed-page-total").textContent = "of –"; pageInput.value = 1;
-      modal.classList.remove("hidden");
-      document.body.style.overflow = "hidden";
-      message("Loading signed PDF…");
-      const token = ++v.token;
-      try {
-        const res = await fetch(job.download_url + "?inline=1", { credentials: "same-origin" });
-        if (!res.ok) throw new Error(res.status === 404 ? "The signed file has expired or was removed." : `Could not load (${res.status})`);
-        const buf = await res.arrayBuffer();
-        if (token !== v.token) return;
-        v.pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-        for (let i = 1; i <= v.pdf.numPages; i++) {
-          const vp = (await v.pdf.getPage(i)).getViewport({ scale: 1 });
-          v.sizes.push({ w: vp.width, h: vp.height });
-        }
-        if (token !== v.token) return;
-        $("#signed-page-total").textContent = `of ${v.pdf.numPages}`;
-        pageInput.max = v.pdf.numPages;
-        layout();
-        // Jump to the (first) signed page so the stamp is visible straight away.
-        if (job.first_signed_page && job.first_signed_page > 1) setTimeout(() => scrollToPage(job.first_signed_page, false), 50);
-      } catch (ex) {
-        message(ex.message || "Could not show the signed PDF.", "text-red-700");
-      }
-    }
-
-    modal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", close));
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && isOpen()) close(); });
-    $("#signed-goto").addEventListener("submit", (e) => { e.preventDefault(); scrollToPage(+pageInput.value, true); pageInput.blur(); });
-    pageInput.addEventListener("change", () => scrollToPage(+pageInput.value, true));
-    $("#signed-zoom-in").addEventListener("click", () => { v.zoom = nextZoom(v.zoom || fitScale(), +1); layout(v.current); });
-    $("#signed-zoom-out").addEventListener("click", () => { v.zoom = nextZoom(v.zoom || fitScale(), -1); layout(v.current); });
-    $("#signed-zoom-fit").addEventListener("click", () => { v.zoom = null; layout(v.current); });
-    let rt; window.addEventListener("resize", () => { if (isOpen() && !v.zoom) { clearTimeout(rt); rt = setTimeout(() => layout(v.current), 200); } });
-
-    return { open, close, isOpen };
   }
 
   // ================================================================== ADMIN

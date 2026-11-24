@@ -299,15 +299,19 @@ If the token is unplugged and replugged, the worker reconnects on its next healt
      above, below, right of, or over it, for the first, last or every occurrence. Needs a
      text-based PDF (scans have no text). If the text isn't found, the job fails with a clear
      message.
-3. Optionally edit **Reason** and **Location**, then click **Queue for signing**.
+3. Optionally edit **Reason** and **Location**, then click **Queue for signing**, either
+   the button in the preview toolbar (next to the PDF) or the one under the form.
 4. **My signing queue** refreshes every 3 s (`QUEUED #n → PROCESSING → COMPLETED / FAILED`).
-   When a document you just queued finishes, its signed PDF opens automatically in a preview
-   at the signed page, so you can check the stamp before you click **Download**
-   (`<name>_signed.pdf`). Untick **Auto-open signed PDF** to turn this off; the choice is
-   remembered in the browser. **Preview** on any completed row opens it again.
+   When a document you just queued finishes, its signed PDF opens in the same preview pane,
+   at the signed page, with a green **Signed PDF** bar: check the stamp, then click
+   **Download** (`<name>_signed.pdf`) or **Close**. If you've already started placing the next
+   upload, it isn't replaced; a message tells you the document is signed instead. **Preview**
+   on any completed row shows it again, and **Close** returns to your upload with its box
+   intact. Untick **Auto-open signed PDF** to turn the automatic preview off; the browser
+   remembers the choice.
 
-The upload preview and the signed-PDF preview both scroll, zoom (**−** / **+** / **Fit**) and
-have a page box: type a page number and press Enter to jump straight to it in long PDFs.
+The preview scrolls through the whole document, zooms (**−** / **+** / **Fit**), and has a
+page box: type a page number and press Enter to jump straight to it in long PDFs.
 
 Regular users see only the documents they queued themselves. Nobody else can list, preview,
 download or delete them, except admins. Admins get an **All users** checkbox above the queue
