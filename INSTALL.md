@@ -102,24 +102,34 @@ If `nssm` is not found, close and reopen the Administrator PowerShell (and re-ru
 > or turn off the *python.exe* alias under Settings → Apps → Advanced app settings → App
 > execution aliases.
 
-## Step 4: Install the ePass 2003 driver
+## Step 4: Install the token driver
 
-1. Download the **ePass2003 Windows setup** from your DSC provider's support page (eMudhra,
-   Capricorn, Sify, (n)Code, VSign, Pantasign, ...). Use the official vendor site only.
+1. Download the Windows driver for **your token model** from your DSC provider's support page
+   (eMudhra, Capricorn, Sify, (n)Code, VSign, Pantasign, ...). Use the official vendor site
+   only. Tokens that look alike use different drivers: Feitian **ePass 2003** and Hypersecu
+   **HYP2003** (HyperPKI) are separate downloads.
 2. Run the installer as Administrator and accept the defaults.
 3. **Unplug the token and plug it back in.**
 
-Verify:
+Find the driver's 64-bit PKCS#11 DLL. You'll set its path as `PKCS11_LIB_PATH` in Step 6.
 
 ```powershell
-Test-Path C:\Windows\System32\eps2003csp11.dll
+Get-ChildItem C:\Windows\System32, 'C:\Program Files', 'C:\Program Files (x86)' -Recurse -Include *pkcs11*.dll,*csp11*.dll,*p11*.dll -ErrorAction SilentlyContinue | Select-Object FullName, Length
 ```
 
-It must print `True`. If it prints `False`, find where the installer put the DLL. You'll set
-that path as `PKCS11_LIB_PATH` in Step 6.
+Common names:
+
+| Token | 64-bit PKCS#11 DLL |
+|---|---|
+| Feitian ePass 2003 | `C:\Windows\System32\eps2003csp11.dll` (newer drivers: `eps2003csp11v2.dll`) |
+| Hypersecu HYP2003 (HyperPKI) | `C:\Windows\System32\HYP2003csp11IND.dll` |
+
+Use the file in **System32**, never the copy in `SysWOW64` (that one is 32-bit and won't load).
+Ignore Git's, Office's and Acrobat's own `*p11*` files. If the list is unclear, this shows
+which token software is installed:
 
 ```powershell
-Get-ChildItem C:\Windows\System32, 'C:\Program Files', 'C:\Program Files (x86)' -Recurse -Filter 'eps2003csp11*.dll' -ErrorAction SilentlyContinue | Select-Object FullName
+Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -match 'ePass|Feitian|HyperPKI|Hypersecu|Longmai|Watchdata|mToken|SafeNet|Token' } | Select-Object DisplayName, Publisher
 ```
 
 Check that Windows sees the token. A PIN prompt may appear: press **Cancel**.
@@ -170,8 +180,10 @@ notepad C:\dsc-signer\.env
 
 Check these lines and save:
 
-* `PKCS11_LIB_PATH`: change it if Step 4 found the DLL somewhere else
-* `TOKEN_LABEL`: set in Step 7 (leave blank to use the first token)
+* `PKCS11_LIB_PATH`: set it to the DLL from Step 4, e.g.
+  `PKCS11_LIB_PATH=C:\Windows\System32\HYP2003csp11IND.dll` for a HYP2003 token
+* `TOKEN_LABEL`: leave it **blank** for now (the app then uses the token that is plugged in);
+  Step 7 shows the real label if you want to pin it
 * `SIGN_REASON` / `SIGN_LOCATION`: optional defaults, e.g. `SIGN_LOCATION='Mumbai'`
 * `TSA_URL`: optional timestamp server, e.g. `TSA_URL=http://timestamp.digicert.com`
 

@@ -60,18 +60,19 @@ VSign, etc.) or from the token maker (Feitian/Longmai). Download the **ePass2003
 setup** from your provider's download page, run it as Administrator, then **unplug and replug
 the token**.
 
-Check that the PKCS#11 DLL is present:
+The DLL name depends on the token model and driver version, so search for it and set
+`PKCS11_LIB_PATH` in `.env` to the 64-bit one:
 
 ```powershell
-Test-Path C:\Windows\System32\eps2003csp11.dll
+Get-ChildItem C:\Windows\System32, 'C:\Program Files', 'C:\Program Files (x86)' -Recurse -Include *pkcs11*.dll,*csp11*.dll,*p11*.dll -ErrorAction SilentlyContinue | Select-Object FullName, Length
 ```
 
-`True` means you're set. If your installer put the DLL somewhere else, find it and set
-`PKCS11_LIB_PATH` in `.env` to that path:
+| Token | 64-bit PKCS#11 DLL |
+|---|---|
+| Feitian ePass 2003 | `C:\Windows\System32\eps2003csp11.dll` (newer drivers: `eps2003csp11v2.dll`) |
+| Hypersecu HYP2003 (HyperPKI), an ePass 2003-compatible token sold in India | `C:\Windows\System32\HYP2003csp11IND.dll` |
 
-```powershell
-Get-ChildItem C:\Windows\System32, "C:\Program Files*" -Recurse -Filter "eps2003csp11*.dll" -ErrorAction SilentlyContinue | Select-Object FullName
-```
+Ignore other programs' `*p11*` files (Git, Office, Acrobat).
 
 > Use the **64-bit** DLL (in `System32`) with 64-bit Python. The 32-bit copy in `SysWOW64`
 > will not load.
@@ -94,7 +95,7 @@ After section 3 (the virtual environment must exist):
 .venv\Scripts\python.exe scripts\list_token.py
 ```
 
-This loads `eps2003csp11.dll`, prints the **token label** (put it in `TOKEN_LABEL`) and every
+This loads the DLL from `PKCS11_LIB_PATH` (or pass `--lib <path>`), prints the **token label** (put it in `TOKEN_LABEL`) and every
 certificate with its subject, issuer, validity and key usage. It never logs in, so it cannot
 lock the token. A DSC token often holds two certificates: a **signing** one (key usage
 `non_repudiation` / `digital_signature`) and an **encryption** one. The app automatically picks
@@ -136,7 +137,7 @@ Then review `.env` in Notepad (`notepad .env`). The settings you'll most likely 
 
 | Setting | Meaning |
 |---|---|
-| `PKCS11_LIB_PATH` | Path to `eps2003csp11.dll` |
+| `PKCS11_LIB_PATH` | Path to the token's 64-bit PKCS#11 DLL (`eps2003csp11.dll`, `HYP2003csp11IND.dll`, ...) |
 | `TOKEN_LABEL` | Token label from `list_token.py`. Leave blank to use the first token found |
 | `TOKEN_PIN` | Token user PIN. **Never share or commit this file** |
 | `CERT_LABEL` | Optional filter if the token holds several signing certificates |
