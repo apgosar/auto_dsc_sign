@@ -121,7 +121,7 @@ Put the project folder somewhere permanent, e.g. `C:\AnkurGosar\auto_digi_sign`.
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
-.\scripts\install_windows.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_windows.ps1
 ```
 
 The script:
@@ -173,7 +173,7 @@ Sign a test PDF before going remote. Then stop the server with **Ctrl+C** and re
 In an **Administrator PowerShell** in the project folder:
 
 ```powershell
-.\scripts\install_service.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_service.ps1
 ```
 
 This registers the **DSCSigner** service (auto-start, restarts on crash after 5 s, logs in
@@ -183,7 +183,7 @@ If the badge shows **NO_TOKEN** under the service but the token worked in sectio
 token middleware needs a user session. Run the service as your own Windows account:
 
 ```powershell
-.\scripts\install_service.ps1 -RunAsUser
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_service.ps1 -RunAsUser
 ```
 
 Useful commands:
@@ -192,7 +192,7 @@ Useful commands:
 Get-Service DSCSigner
 Restart-Service DSCSigner
 Get-Content .\logs\app.log -Tail 50 -Wait
-.\scripts\install_service.ps1 -Uninstall
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_service.ps1 -Uninstall
 ```
 
 Restart the service after editing `.env`.

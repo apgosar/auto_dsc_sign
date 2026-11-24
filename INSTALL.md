@@ -159,7 +159,7 @@ the folder to `C:\dsc-signer`, then run `Set-Location C:\dsc-signer`.
 Step 3 already installed the prerequisites, so skip winget:
 
 ```powershell
-.\scripts\install_windows.ps1 -SkipWinget
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_windows.ps1 -SkipWinget
 ```
 
 The script creates `C:\dsc-signer\.venv`, installs the Python packages (a few minutes), and
@@ -237,7 +237,7 @@ notepad C:\dsc-signer\.env
 ## Step 9: Install the Windows service (auto-start)
 
 ```powershell
-.\scripts\install_service.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_service.ps1
 ```
 
 You should see the `DSCSigner` service *Running* and `Health check OK`. Open
@@ -247,7 +247,7 @@ You should see the `DSCSigner` service *Running* and `Health check OK`. Open
 own Windows account instead; it asks for your Windows password:
 
 ```powershell
-.\scripts\install_service.ps1 -RunAsUser
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_service.ps1 -RunAsUser
 ```
 
 Service commands for later:
@@ -361,7 +361,7 @@ Your `.env`, users and settings (`data\dsc_signer.db`) are kept across updates.
 ## Uninstalling
 
 ```powershell
-.\scripts\install_service.ps1 -Uninstall
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_service.ps1 -Uninstall
 ```
 
 ```powershell
@@ -374,9 +374,9 @@ Then delete `C:\dsc-signer`, and remove the tunnel in the Cloudflare dashboard.
 
 | Symptom | What to do |
 |---|---|
-| `running scripts is disabled on this system` | Run `Set-ExecutionPolicy -Scope Process Bypass -Force` in this window first |
+| `running scripts is disabled on this system` | Being Administrator doesn't lift this. Start the script as `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\<script>.ps1`. If you downloaded a ZIP, also run `Get-ChildItem C:\dsc-signer -Recurse \| Unblock-File`. Still blocked? `Get-ExecutionPolicy -List` shows whether a Group Policy enforces it |
 | `py` not found after Step 3 | Close and reopen the Administrator PowerShell |
-| `pip install` fails | Check internet or proxy, then re-run `.\scripts\install_windows.ps1 -SkipWinget` |
+| `pip install` fails | Check internet or proxy, then re-run Step 6 |
 | Badge `NO_DRIVER` | Driver not installed, or wrong `PKCS11_LIB_PATH` (Step 4) |
 | Badge `NO_TOKEN` | Replug the token, run `list_token.py`, try `install_service.ps1 -RunAsUser` |
 | Badge `PIN_ERROR` | Fix `TOKEN_PIN` in `.env`, then `Restart-Service DSCSigner` |
