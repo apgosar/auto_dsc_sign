@@ -147,24 +147,6 @@
     ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("border-blue-500", "bg-blue-50"); }));
     drop.addEventListener("drop", (e) => { if (e.dataTransfer && e.dataTransfer.files) setFiles(e.dataTransfer.files); });
 
-    // ---------------- tabs
-    $$(".tab-btn").forEach((b) => b.addEventListener("click", () => {
-      state.mode = b.dataset.mode;
-      $$(".tab-btn").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
-      $$(".mode-panel").forEach((p) => p.classList.toggle("hidden", p.dataset.mode !== state.mode));
-      $("#pdf-pages").classList.toggle("drawable", state.mode === "visual" && !state.signedJob);
-      drawBox();
-      updateSubmit();
-    }));
-    const pPages = $("#p-pages"), pPos = $("#p-position");
-    pPages.addEventListener("change", () => $("#p-pagelist-wrap").classList.toggle("hidden", pPages.value !== "specific"));
-    function updateMarginLabels() {
-      const custom = pPos.value === "custom";
-      $("#p-mx-lbl").textContent = custom ? "X from left (pt)" : "Side margin (pt)";
-      $("#p-my-lbl").textContent = custom ? "Y from bottom (pt)" : "Top/bottom margin (pt)";
-    }
-    pPos.addEventListener("change", updateMarginLabels); updateMarginLabels();
-
     // ---------------- PDF preview: whole document in one scrolling column.
     // Pages are laid out at their real size up front and rendered lazily as they scroll
     // into view, so long PDFs stay fast. The signature box can be drawn on any page.
@@ -420,21 +402,11 @@
     }
     queueTop.addEventListener("click", () => submitBtn.click());
     function collectParams() {
-      const reason = $("#reason").value.trim(), location = $("#location").value.trim();
-      if (state.mode === "visual") {
-        const b = state.box;
-        return { page_number: state.boxPage, x_pct: +b.x.toFixed(6), y_pct: +b.y.toFixed(6), w_pct: +b.w.toFixed(6), h_pct: +b.h.toFixed(6), reason, location };
-      }
-      if (state.mode === "preset") {
-        return { pages: pPages.value, page_list: $("#p-pagelist").value.trim(), position: pPos.value,
-          margin_x: +$("#p-mx").value, margin_y: +$("#p-my").value, width: +$("#p-w").value, height: +$("#p-h").value, reason, location };
-      }
-      return { text: $("#a-text").value.trim(), placement: $("#a-placement").value, match: $("#a-match").value,
-        width: +$("#a-w").value, height: +$("#a-h").value, reason, location };
+      const b = state.box;
+      return { page_number: state.boxPage, x_pct: +b.x.toFixed(6), y_pct: +b.y.toFixed(6), w_pct: +b.w.toFixed(6), h_pct: +b.h.toFixed(6) };
     }
     submitBtn.addEventListener("click", async () => {
-      if (state.mode === "anchor" && !$("#a-text").value.trim()) { showMsg(submitMsg, "Enter the anchor text to search for.", "error"); return; }
-      if (state.mode === "preset" && pPages.value === "specific" && !$("#p-pagelist").value.trim()) { showMsg(submitMsg, "Enter the page number(s).", "error"); return; }
+      if (!state.box || !state.boxPage) { showMsg(submitMsg, "Draw the signature box on the PDF first.", "error"); return; }
       const fd = new FormData();
       state.files.forEach((f) => fd.append("files", f, f.name));
       fd.append("mode", state.mode);

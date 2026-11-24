@@ -284,23 +284,20 @@ If the token is unplugged and replugged, the worker reconnects on its next healt
 ## 8. Using the app
 
 1. **Upload** one or more PDFs (up to 20 per upload, 25 MB each by default).
-2. **Choose a placement mode:**
-   * **Visual:** the whole first PDF is shown in a scrolling preview. Scroll (or type a page
-     number) to the page you want, drag on it to draw the box, drag the box to move it, and
-     drag the corner handle to resize it. Size presets: Small 150×50, Medium 200×70, Large
-     250×90 pt (with no box yet, they place one on the page in view). The box is signed on the
-     page you drew it on, at the same relative position in every uploaded file. On phones and
-     tablets, use a size preset to create the box and drag it into place, since a finger drag
-     on the page scrolls.
-   * **Page & Position:** first, last, all, or specific pages (`8`, `1,3,8`, `2-5`), a corner or
-     bottom-centre preset (or custom X-from-left / Y-from-bottom margins), and width/height in
-     points (72 pt = 1 inch; A4 = 595 × 842 pt).
-   * **Text Anchor:** finds text such as `Authorized Signatory` and places the signature
-     above, below, right of, or over it, for the first, last or every occurrence. Needs a
-     text-based PDF (scans have no text). If the text isn't found, the job fails with a clear
-     message.
-3. Optionally edit **Reason** and **Location**, then click **Queue for signing**, either
-   the button in the preview toolbar (next to the PDF) or the one under the form.
+2. **Place the signature:** the whole first PDF is shown in a scrolling preview. Scroll (or
+   type a page number) to the page you want, drag on it to draw the box, drag the box to move
+   it, and drag the corner handle to resize it. Size presets: Small 150×50, Medium 200×70,
+   Large 250×90 pt (with no box yet, they place one on the page in view). The box is signed on
+   the page you drew it on, at the same relative position in every uploaded file. On phones
+   and tablets, use a size preset to create the box and drag it into place, since a finger
+   drag on the page scrolls.
+3. Click **Queue for signing**, either the button in the preview toolbar (next to the PDF) or
+   the one under the form. Both stay disabled until a box is drawn. Reason and Location come
+   from `SIGN_REASON` / `SIGN_LOCATION` in `.env`; leave them empty to show neither.
+
+> The dashboard offers only this visual placement. The server still understands the
+> page/preset and text-anchor modes (`app/placement.py`), so they can be brought back to the
+> page later if needed.
 4. **My signing queue** refreshes every 3 s (`QUEUED #n → PROCESSING → COMPLETED / FAILED`).
    When a document you just queued finishes, its signed PDF opens in the same preview pane,
    at the signed page, with a green **Signed PDF** bar: check the stamp, then click
