@@ -53,6 +53,12 @@
     return d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
+  const ZOOM_STEPS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 2.5, 3];
+  function nextZoom(current, dir) {
+    if (dir > 0) return ZOOM_STEPS.find((z) => z > current + 0.01) || ZOOM_STEPS[ZOOM_STEPS.length - 1];
+    return [...ZOOM_STEPS].reverse().find((z) => z < current - 0.01) || ZOOM_STEPS[0];
+  }
+
   function bindLogout() {
     const b = $("#logout-btn");
     if (!b) return;
@@ -182,13 +188,15 @@
       }
     }
     async function renderPage() {
-      if (!state.pdf || state.rendering) return;
+      if (!state.pdf) return;
+      if (state.rendering) { state.renderAgain = true; return; }
       state.rendering = true;
       try {
         const page = await state.pdf.getPage(state.pageNum);
         const base = page.getViewport({ scale: 1 });
         const avail = Math.max(280, scroll.clientWidth - 32);
-        state.scale = Math.min(1.6, avail / base.width);
+        state.fitScale = Math.min(1.6, avail / base.width);
+        state.scale = state.zoom || state.fitScale;
         const vp = page.getViewport({ scale: state.scale });
         const dpr = window.devicePixelRatio || 1;
         canvas.width = Math.floor(vp.width * dpr); canvas.height = Math.floor(vp.height * dpr);
@@ -198,15 +206,35 @@
         await page.render({ canvasContext: ctx, viewport: vp }).promise;
         state.pagePt = { w: base.width, h: base.height };
         drawBox(); updatePageNav();
-      } finally { state.rendering = false; }
+      } finally {
+        state.rendering = false;
+        if (state.renderAgain) { state.renderAgain = false; renderPage(); }
+      }
     }
     function updatePageNav() {
-      $("#page-info").textContent = state.pageCount ? `Page ${state.pageNum} of ${state.pageCount}` : "Page – of –";
-      $("#prev-page").disabled = !state.pdf || state.pageNum <= 1;
-      $("#next-page").disabled = !state.pdf || state.pageNum >= state.pageCount;
+      const has = !!state.pdf;
+      const inp = $("#page-input");
+      inp.disabled = !has;
+      inp.max = state.pageCount || 1;
+      if (document.activeElement !== inp) inp.value = has ? state.pageNum : 1;
+      $("#page-total").textContent = has ? `of ${state.pageCount}` : "of –";
+      $("#prev-page").disabled = !has || state.pageNum <= 1;
+      $("#next-page").disabled = !has || state.pageNum >= state.pageCount;
+      ["#zoom-in", "#zoom-out", "#zoom-fit"].forEach((s) => { $(s).disabled = !has; });
+      $("#zoom-info").textContent = state.zoom ? Math.round(state.zoom * 100) + "%" : "Fit";
     }
-    $("#prev-page").addEventListener("click", () => { if (state.pageNum > 1) { state.pageNum--; renderPage(); } });
-    $("#next-page").addEventListener("click", () => { if (state.pageNum < state.pageCount) { state.pageNum++; renderPage(); } });
+    function goToPage(n) {
+      if (!state.pdf) return;
+      n = clamp(Math.round(n) || 1, 1, state.pageCount);
+      if (n !== state.pageNum) { state.pageNum = n; scroll.scrollTop = 0; renderPage(); } else updatePageNav();
+    }
+    $("#prev-page").addEventListener("click", () => goToPage(state.pageNum - 1));
+    $("#next-page").addEventListener("click", () => goToPage(state.pageNum + 1));
+    $("#goto-form").addEventListener("submit", (e) => { e.preventDefault(); goToPage(+$("#page-input").value); $("#page-input").blur(); });
+    $("#page-input").addEventListener("change", () => goToPage(+$("#page-input").value));
+    $("#zoom-in").addEventListener("click", () => { state.zoom = nextZoom(state.zoom || state.fitScale, +1); renderPage(); });
+    $("#zoom-out").addEventListener("click", () => { state.zoom = nextZoom(state.zoom || state.fitScale, -1); renderPage(); });
+    $("#zoom-fit").addEventListener("click", () => { state.zoom = null; renderPage(); });
     let resizeT; window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(renderPage, 200); });
 
     // ---------------- signature box (stored as fractions of the page)
@@ -301,6 +329,7 @@
       submitBtn.disabled = true; submitBtn.textContent = "Uploading…";
       try {
         const data = await api("/api/jobs", { method: "POST", form: fd });
+        data.jobs.filter((j) => j.status !== "FAILED").forEach((j) => watched.add(j.id));
         const failed = data.jobs.filter((j) => j.status === "FAILED");
         if (failed.length) showMsg(submitMsg, `${data.jobs.length - failed.length} queued, ${failed.length} rejected: ` + failed.map((j) => `${j.filename}: ${j.error}`).join(" | "), "error");
         else showMsg(submitMsg, `${data.jobs.length} document(s) queued for signing.`, "ok");
@@ -319,11 +348,25 @@
       COMPLETED: "bg-green-100 text-green-800", FAILED: "bg-red-100 text-red-800", EXPIRED: "bg-slate-100 text-slate-500",
     };
     const MODE = { visual: "Visual", preset: "Page/Position", anchor: "Text anchor" };
-    const allBox = $("#show-all-jobs");
-    if (allBox) allBox.addEventListener("change", () => { state.showAll = allBox.checked; refreshJobs(); });
+
+    // Jobs submitted from this tab: when one finishes, its signed PDF opens automatically.
+    const watched = new Set();
+    const toPreview = [];
+    const autoBox = $("#auto-preview");
+    try { const v = localStorage.getItem("dsc.autoPreview"); if (v !== null) autoBox.checked = v === "1"; } catch (_) {}
+    autoBox.addEventListener("change", () => { try { localStorage.setItem("dsc.autoPreview", autoBox.checked ? "1" : "0"); } catch (_) {} });
+    const viewer = createSignedViewer(() => { if (toPreview.length && autoBox.checked) viewer.open(toPreview.shift()); });
+
     async function refreshJobs() {
       let data;
-      try { data = await api("/api/jobs" + (state.showAll ? "?scope=all" : "")); } catch (_) { return; }
+      try { data = await api("/api/jobs"); } catch (_) { return; }
+      data.jobs.forEach((j) => {
+        if (!watched.has(j.id)) return;
+        if (j.status === "COMPLETED" && j.download_url) { watched.delete(j.id); toPreview.push(j); }
+        else if (j.status === "FAILED" || j.status === "EXPIRED") watched.delete(j.id);
+      });
+      if (toPreview.length && autoBox.checked && !viewer.isOpen()) viewer.open(toPreview.shift());
+      else if (!autoBox.checked) toPreview.length = 0;
       const body = $("#jobs-body");
       body.textContent = "";
       if (!data.jobs.length) {
@@ -343,7 +386,10 @@
         const c4 = document.createElement("td"); c4.className = "pr-3 text-xs whitespace-nowrap"; c4.textContent = fmtTime(j.created_at);
         const c5 = document.createElement("td"); c5.className = "text-right whitespace-nowrap";
         if (j.download_url) {
-          const a = document.createElement("a"); a.href = j.download_url; a.className = "btn btn-primary btn-sm"; a.textContent = "Download"; c5.append(a);
+          const pv = document.createElement("button"); pv.className = "btn btn-ghost btn-sm mr-1"; pv.textContent = "Preview";
+          pv.addEventListener("click", () => viewer.open(j));
+          const a = document.createElement("a"); a.href = j.download_url; a.className = "btn btn-primary btn-sm"; a.textContent = "Download";
+          c5.append(pv, a);
         }
         if (j.status !== "PROCESSING") {
           const d = document.createElement("button"); d.className = "btn btn-ghost btn-sm ml-1"; d.textContent = "✕"; d.title = "Remove";
@@ -368,6 +414,136 @@
     refreshJobs(); refreshToken();
     setInterval(refreshJobs, 3000);
     setInterval(refreshToken, 10000);
+  }
+
+  // ================================================================== SIGNED PDF VIEWER
+  // Continuous-scroll PDF.js viewer in a modal. Pages render lazily as they scroll into view,
+  // so long documents open quickly. Signature widgets are drawn from their appearance streams.
+  function createSignedViewer(onClose) {
+    const modal = $("#signed-modal"), scroller = $("#signed-scroll"), pagesEl = $("#signed-pages");
+    const pageInput = $("#signed-page-input");
+    const v = { pdf: null, job: null, zoom: null, sizes: [], token: 0, observer: null, current: 1 };
+
+    function isOpen() { return !modal.classList.contains("hidden"); }
+
+    function close() {
+      if (!isOpen()) return;
+      modal.classList.add("hidden");
+      document.body.style.overflow = "";
+      v.token++;
+      if (v.observer) v.observer.disconnect();
+      if (v.pdf) { v.pdf.destroy(); v.pdf = null; }
+      pagesEl.textContent = "";
+      onClose && onClose();
+    }
+
+    function fitScale() {
+      const maxW = Math.max(...v.sizes.map((s) => s.w), 1);
+      return Math.min(1.5, Math.max(0.3, (scroller.clientWidth - 40) / maxW));
+    }
+
+    function message(text, cls) {
+      pagesEl.textContent = "";
+      const p = document.createElement("p"); p.className = "text-sm mt-10 " + (cls || "text-slate-500"); p.textContent = text;
+      pagesEl.append(p);
+    }
+
+    async function renderInto(wrap, token) {
+      if (wrap.dataset.rendered === "1" || !v.pdf) return;
+      wrap.dataset.rendered = "1";
+      const n = +wrap.dataset.page, scale = v.zoom || fitScale();
+      const page = await v.pdf.getPage(n);
+      if (token !== v.token) return;
+      const vp = page.getViewport({ scale });
+      const dpr = window.devicePixelRatio || 1;
+      const c = document.createElement("canvas");
+      c.width = Math.floor(vp.width * dpr); c.height = Math.floor(vp.height * dpr);
+      c.style.width = vp.width + "px"; c.style.height = vp.height + "px";
+      const ctx = c.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      await page.render({ canvasContext: ctx, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.ENABLE }).promise;
+      if (token !== v.token) return;
+      wrap.textContent = ""; wrap.append(c);
+    }
+
+    function layout(keepPage) {
+      const token = ++v.token;
+      if (v.observer) v.observer.disconnect();
+      pagesEl.textContent = "";
+      const scale = v.zoom || fitScale();
+      $("#signed-zoom-info").textContent = v.zoom ? Math.round(v.zoom * 100) + "%" : "Fit";
+      v.observer = new IntersectionObserver((entries) => {
+        entries.forEach((e) => { if (e.isIntersecting) renderInto(e.target, token); });
+      }, { root: scroller, rootMargin: "600px 0px" });
+      v.sizes.forEach((s, i) => {
+        const wrap = document.createElement("div");
+        wrap.className = "bg-white shadow relative flex items-center justify-center text-slate-300 text-sm";
+        wrap.style.width = s.w * scale + "px"; wrap.style.height = s.h * scale + "px";
+        wrap.dataset.page = String(i + 1);
+        wrap.textContent = `Page ${i + 1}`;
+        pagesEl.append(wrap);
+        v.observer.observe(wrap);
+      });
+      if (keepPage) scrollToPage(keepPage, false);
+    }
+
+    function scrollToPage(n, smooth) {
+      n = Math.min(Math.max(Math.round(n) || 1, 1), v.sizes.length || 1);
+      const el = pagesEl.children[n - 1];
+      if (el) scroller.scrollTo({ top: el.offsetTop - 12, behavior: smooth ? "smooth" : "auto" });
+      v.current = n; pageInput.value = n;
+    }
+
+    scroller.addEventListener("scroll", () => {
+      if (!v.sizes.length) return;
+      const mid = scroller.scrollTop + scroller.clientHeight / 3;
+      let n = 1;
+      for (const el of pagesEl.children) { if (el.offsetTop <= mid) n = +el.dataset.page || n; else break; }
+      v.current = n;
+      if (document.activeElement !== pageInput) pageInput.value = n;
+    });
+
+    async function open(job) {
+      if (!window.pdfjsLib) { window.open(job.download_url + "?inline=1", "_blank"); return; }
+      if (isOpen()) close();
+      v.job = job; v.zoom = null; v.sizes = [];
+      $("#signed-title").textContent = job.filename.replace(/\.pdf$/i, "") + "_signed.pdf";
+      $("#signed-download").href = job.download_url;
+      $("#signed-page-total").textContent = "of –"; pageInput.value = 1;
+      modal.classList.remove("hidden");
+      document.body.style.overflow = "hidden";
+      message("Loading signed PDF…");
+      const token = ++v.token;
+      try {
+        const res = await fetch(job.download_url + "?inline=1", { credentials: "same-origin" });
+        if (!res.ok) throw new Error(res.status === 404 ? "The signed file has expired or was removed." : `Could not load (${res.status})`);
+        const buf = await res.arrayBuffer();
+        if (token !== v.token) return;
+        v.pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+        for (let i = 1; i <= v.pdf.numPages; i++) {
+          const vp = (await v.pdf.getPage(i)).getViewport({ scale: 1 });
+          v.sizes.push({ w: vp.width, h: vp.height });
+        }
+        if (token !== v.token) return;
+        $("#signed-page-total").textContent = `of ${v.pdf.numPages}`;
+        pageInput.max = v.pdf.numPages;
+        layout();
+        // Jump to the (first) signed page so the stamp is visible straight away.
+        if (job.first_signed_page && job.first_signed_page > 1) setTimeout(() => scrollToPage(job.first_signed_page, false), 50);
+      } catch (ex) {
+        message(ex.message || "Could not show the signed PDF.", "text-red-700");
+      }
+    }
+
+    modal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", close));
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && isOpen()) close(); });
+    $("#signed-goto").addEventListener("submit", (e) => { e.preventDefault(); scrollToPage(+pageInput.value, true); pageInput.blur(); });
+    pageInput.addEventListener("change", () => scrollToPage(+pageInput.value, true));
+    $("#signed-zoom-in").addEventListener("click", () => { v.zoom = nextZoom(v.zoom || fitScale(), +1); layout(v.current); });
+    $("#signed-zoom-out").addEventListener("click", () => { v.zoom = nextZoom(v.zoom || fitScale(), -1); layout(v.current); });
+    $("#signed-zoom-fit").addEventListener("click", () => { v.zoom = null; layout(v.current); });
+    let rt; window.addEventListener("resize", () => { if (isOpen() && !v.zoom) { clearTimeout(rt); rt = setTimeout(() => layout(v.current), 200); } });
+
+    return { open, close, isOpen };
   }
 
   // ================================================================== ADMIN

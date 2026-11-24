@@ -367,7 +367,12 @@ def healthz():
 
 # --------------------------------------------------------------------------- jobs API
 def _job_dict(job: Job, queue_pos: Optional[int] = None) -> dict:
+    try:
+        pages = [int(b["page_index"]) + 1 for b in json.loads(job.boxes_json or "[]")]
+    except (ValueError, KeyError, TypeError):
+        pages = []
     return {
+        "first_signed_page": min(pages) if pages else None,
         "id": job.id,
         "filename": job.original_filename,
         "mode": job.mode,
@@ -443,10 +448,9 @@ def api_create_jobs(
 
 
 @app.get("/api/jobs")
-def api_list_jobs(scope: str = "mine", auth: AuthContext = Depends(require_user), db: Session = Depends(get_db)):
-    q = select(Job).order_by(Job.created_at.desc()).limit(100)
-    if not (scope == "all" and auth.user.is_admin):
-        q = q.where(Job.user_id == auth.user.id)
+def api_list_jobs(auth: AuthContext = Depends(require_user), db: Session = Depends(get_db)):
+    # Every user (admins included) only ever sees the documents they queued themselves.
+    q = select(Job).where(Job.user_id == auth.user.id).order_by(Job.created_at.desc()).limit(100)
     jobs = db.scalars(q).all()
     queued = db.scalars(select(Job.id).where(Job.status == STATUS_QUEUED).order_by(Job.created_at)).all()
     pos = {jid: i + 1 for i, jid in enumerate(queued)}
@@ -454,21 +458,24 @@ def api_list_jobs(scope: str = "mine", auth: AuthContext = Depends(require_user)
 
 
 def _own_job(db: Session, auth: AuthContext, job_id: str) -> Job:
+    """Only the user who queued a job may see, preview, download or delete it."""
     job = db.get(Job, job_id)
-    if job is None or (job.user_id != auth.user.id and not auth.user.is_admin):
+    if job is None or job.user_id != auth.user.id:
         raise HTTPException(404, "Job not found")
     return job
 
 
 @app.get("/api/jobs/{job_id}/download")
-def api_download(job_id: str, request: Request, auth: AuthContext = Depends(require_user), db: Session = Depends(get_db)):
+def api_download(job_id: str, request: Request, inline: bool = False,
+                 auth: AuthContext = Depends(require_user), db: Session = Depends(get_db)):
     job = _own_job(db, auth, job_id)
     if job.status != STATUS_COMPLETED or job.files_purged or not Path(job.output_path).is_file():
         raise HTTPException(404, "Signed file not available (not finished or expired)")
     stem = Path(job.original_filename).stem
-    add_audit(db, "JOB_DOWNLOADED", username=auth.user.username, user_id=auth.user.id, ip=_ip(request),
-              detail=job.original_filename)
-    return FileResponse(job.output_path, media_type="application/pdf", filename=f"{stem}_signed.pdf")
+    add_audit(db, "JOB_PREVIEWED" if inline else "JOB_DOWNLOADED", username=auth.user.username,
+              user_id=auth.user.id, ip=_ip(request), detail=job.original_filename)
+    return FileResponse(job.output_path, media_type="application/pdf", filename=f"{stem}_signed.pdf",
+                        content_disposition_type="inline" if inline else "attachment")
 
 
 @app.delete("/api/jobs/{job_id}")

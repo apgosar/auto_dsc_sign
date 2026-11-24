@@ -175,12 +175,22 @@
       <div id="preview-card" class="card p-4">
         <div class="flex flex-wrap items-center gap-2 mb-3">
           <h2 class="font-bold text-slate-900 mr-auto">Preview <span id="preview-name" class="font-normal text-slate-500 text-sm"></span></h2>
-          <button id="prev-page" class="btn btn-ghost btn-sm" disabled>‹ Prev</button>
-          <span id="page-info" class="text-sm text-slate-600">Page – of –</span>
-          <button id="next-page" class="btn btn-ghost btn-sm" disabled>Next ›</button>
+          <button id="prev-page" class="btn btn-ghost btn-sm" disabled title="Previous page">‹ Prev</button>
+          <form id="goto-form" class="flex items-center gap-1 text-sm text-slate-600">
+            <label for="page-input">Page</label>
+            <input id="page-input" type="number" min="1" value="1" class="inp !w-16 !py-1 text-center" disabled title="Type a page number and press Enter">
+            <span id="page-total">of –</span>
+          </form>
+          <button id="next-page" class="btn btn-ghost btn-sm" disabled title="Next page">Next ›</button>
+          <span class="w-px h-5 bg-slate-300 mx-1"></span>
+          <button id="zoom-out" class="btn btn-ghost btn-sm" title="Zoom out" disabled>−</button>
+          <span id="zoom-info" class="text-xs text-slate-600 w-12 text-center">Fit</span>
+          <button id="zoom-in" class="btn btn-ghost btn-sm" title="Zoom in" disabled>+</button>
+          <button id="zoom-fit" class="btn btn-ghost btn-sm" title="Fit to width" disabled>Fit</button>
+          <span class="w-px h-5 bg-slate-300 mx-1"></span>
           <button id="clear-box" class="btn btn-ghost btn-sm">Clear box</button>
         </div>
-        <div id="pdf-scroll" class="overflow-auto bg-slate-200/70 rounded-lg p-3 text-center min-h-[300px] flex items-start justify-center">
+        <div id="pdf-scroll" class="overflow-auto bg-slate-200/70 rounded-lg p-3 text-center min-h-[300px] max-h-[78vh] flex items-start justify-center">
           <div id="pdf-empty" class="text-slate-500 text-sm self-center">Choose a PDF to see the preview.</div>
           <div id="pdf-stage" class="hidden">
             <canvas id="pdf-canvas"></canvas>
@@ -191,10 +201,10 @@
 
       <div class="card p-4">
         <div class="flex items-center mb-3">
-          <h2 class="font-bold text-slate-900 mr-auto">Signing queue</h2>
-          {% if user.is_admin %}
-          <label class="text-xs text-slate-600 flex items-center gap-1"><input type="checkbox" id="show-all-jobs"> all users</label>
-          {% endif %}
+          <h2 class="font-bold text-slate-900 mr-auto">My signing queue</h2>
+          <label class="text-xs text-slate-600 flex items-center gap-1" title="Open the signed PDF automatically when signing finishes">
+            <input type="checkbox" id="auto-preview" checked> Auto-open signed PDF
+          </label>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
@@ -208,6 +218,33 @@
       </div>
     </section>
   </main>
+
+  <!-- Signed PDF preview -->
+  <div id="signed-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="signed-title">
+    <div class="absolute inset-0 bg-slate-900/60" data-close></div>
+    <div class="relative mx-auto my-4 w-[min(1000px,calc(100%-2rem))] h-[calc(100%-2rem)] bg-white rounded-xl shadow-2xl flex flex-col">
+      <div class="flex flex-wrap items-center gap-2 px-4 py-3 border-b">
+        <div class="mr-auto min-w-0">
+          <h2 id="signed-title" class="font-bold text-slate-900 truncate">Signed PDF</h2>
+          <p class="text-xs text-slate-500">Check the signature, then download.</p>
+        </div>
+        <form id="signed-goto" class="flex items-center gap-1 text-sm text-slate-600">
+          <label for="signed-page-input">Page</label>
+          <input id="signed-page-input" type="number" min="1" value="1" class="inp !w-16 !py-1 text-center">
+          <span id="signed-page-total">of –</span>
+        </form>
+        <button id="signed-zoom-out" class="btn btn-ghost btn-sm" title="Zoom out">−</button>
+        <span id="signed-zoom-info" class="text-xs text-slate-600 w-12 text-center">Fit</span>
+        <button id="signed-zoom-in" class="btn btn-ghost btn-sm" title="Zoom in">+</button>
+        <button id="signed-zoom-fit" class="btn btn-ghost btn-sm" title="Fit to width">Fit</button>
+        <a id="signed-download" class="btn btn-primary btn-sm" href="#">Download</a>
+        <button class="btn btn-ghost btn-sm" data-close title="Close">✕</button>
+      </div>
+      <div id="signed-scroll" class="flex-1 overflow-auto bg-slate-200/70 p-4">
+        <div id="signed-pages" class="flex flex-col items-center gap-4"></div>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
   <script>DSC.initDashboard({ isAdmin: {{ 'true' if user.is_admin else 'false' }} });</script>

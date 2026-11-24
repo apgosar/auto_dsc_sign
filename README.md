@@ -297,8 +297,18 @@ If the token is unplugged and replugged, the worker reconnects on its next healt
      text-based PDF (scans have no text). If the text isn't found, the job fails with a clear
      message.
 3. Optionally edit **Reason** and **Location**, then click **Queue for signing**.
-4. The queue table refreshes every 3 s (`QUEUED #n → PROCESSING → COMPLETED / FAILED`). Click
-   **Download** for the signed file (`<name>_signed.pdf`).
+4. **My signing queue** refreshes every 3 s (`QUEUED #n → PROCESSING → COMPLETED / FAILED`).
+   When a document you just queued finishes, its signed PDF opens automatically in a preview
+   at the signed page, so you can check the stamp before you click **Download**
+   (`<name>_signed.pdf`). Untick **Auto-open signed PDF** to turn this off; the choice is
+   remembered in the browser. **Preview** on any completed row opens it again.
+
+The upload preview and the signed-PDF preview both scroll, zoom (**−** / **+** / **Fit**) and
+have a page box: type a page number and press Enter to jump straight to it in long PDFs.
+
+Each user sees only the documents they queued themselves. That includes admins: nobody can
+list, preview, download or delete another user's PDFs. The Admin Panel's audit log records
+who signed, previewed and downloaded what.
 
 The stamp looks like Adobe Acrobat's: the certificate holder's name in large text on the
 left, and *"Digitally signed by <name> / Date: yyyy.mm.dd HH:MM:SS +05'30'"* (plus Reason and
