@@ -201,7 +201,12 @@
 
       <div class="card p-4">
         <div class="flex items-center mb-3">
-          <h2 class="font-bold text-slate-900 mr-auto">My signing queue</h2>
+          <h2 id="queue-title" class="font-bold text-slate-900 mr-auto">My signing queue</h2>
+          {% if user.is_admin %}
+          <label class="text-xs text-slate-600 flex items-center gap-1 mr-3" title="Admins: show documents queued by every user">
+            <input type="checkbox" id="show-all-jobs"> All users
+          </label>
+          {% endif %}
           <label class="text-xs text-slate-600 flex items-center gap-1" title="Open the signed PDF automatically when signing finishes">
             <input type="checkbox" id="auto-preview" checked> Auto-open signed PDF
           </label>
@@ -209,7 +214,7 @@
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="text-left text-xs uppercase text-slate-500 border-b">
-              <tr><th class="py-2 pr-3">File</th><th class="pr-3">Mode</th><th class="pr-3">Status</th><th class="pr-3">Submitted</th><th></th></tr>
+              <tr><th class="py-2 pr-3">File</th><th class="pr-3 owner-col hidden">Owner</th><th class="pr-3">Mode</th><th class="pr-3">Status</th><th class="pr-3">Submitted</th><th></th></tr>
             </thead>
             <tbody id="jobs-body"><tr><td colspan="5" class="py-6 text-center text-slate-400">No jobs yet.</td></tr></tbody>
           </table>

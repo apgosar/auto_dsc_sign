@@ -448,19 +448,29 @@ def api_create_jobs(
 
 
 @app.get("/api/jobs")
-def api_list_jobs(auth: AuthContext = Depends(require_user), db: Session = Depends(get_db)):
-    # Every user (admins included) only ever sees the documents they queued themselves.
-    q = select(Job).where(Job.user_id == auth.user.id).order_by(Job.created_at.desc()).limit(100)
+def api_list_jobs(scope: str = "mine", auth: AuthContext = Depends(require_user), db: Session = Depends(get_db)):
+    # Regular users only ever see the documents they queued; admins may ask for everyone's.
+    show_all = scope == "all" and auth.user.is_admin
+    q = select(Job).order_by(Job.created_at.desc()).limit(300 if show_all else 100)
+    if not show_all:
+        q = q.where(Job.user_id == auth.user.id)
     jobs = db.scalars(q).all()
     queued = db.scalars(select(Job.id).where(Job.status == STATUS_QUEUED).order_by(Job.created_at)).all()
     pos = {jid: i + 1 for i, jid in enumerate(queued)}
-    return {"jobs": [_job_dict(j, pos.get(j.id)) for j in jobs]}
+    owners = dict(db.execute(select(User.id, User.username)).all()) if show_all else {}
+    out = []
+    for j in jobs:
+        d = _job_dict(j, pos.get(j.id))
+        d["owner"] = owners.get(j.user_id, auth.user.username) if show_all else auth.user.username
+        d["mine"] = j.user_id == auth.user.id
+        out.append(d)
+    return {"jobs": out, "scope": "all" if show_all else "mine"}
 
 
 def _own_job(db: Session, auth: AuthContext, job_id: str) -> Job:
-    """Only the user who queued a job may see, preview, download or delete it."""
+    """The user who queued a job, or any admin, may preview, download or delete it."""
     job = db.get(Job, job_id)
-    if job is None or job.user_id != auth.user.id:
+    if job is None or (job.user_id != auth.user.id and not auth.user.is_admin):
         raise HTTPException(404, "Job not found")
     return job
 
@@ -472,8 +482,12 @@ def api_download(job_id: str, request: Request, inline: bool = False,
     if job.status != STATUS_COMPLETED or job.files_purged or not Path(job.output_path).is_file():
         raise HTTPException(404, "Signed file not available (not finished or expired)")
     stem = Path(job.original_filename).stem
+    detail = job.original_filename
+    if job.user_id != auth.user.id:
+        owner = db.get(User, job.user_id)
+        detail += f" (owner: {owner.username if owner else job.user_id}, accessed as admin)"
     add_audit(db, "JOB_PREVIEWED" if inline else "JOB_DOWNLOADED", username=auth.user.username,
-              user_id=auth.user.id, ip=_ip(request), detail=job.original_filename)
+              user_id=auth.user.id, ip=_ip(request), detail=detail)
     return FileResponse(job.output_path, media_type="application/pdf", filename=f"{stem}_signed.pdf",
                         content_disposition_type="inline" if inline else "attachment")
 

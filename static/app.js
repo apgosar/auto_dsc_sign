@@ -357,9 +357,23 @@
     autoBox.addEventListener("change", () => { try { localStorage.setItem("dsc.autoPreview", autoBox.checked ? "1" : "0"); } catch (_) {} });
     const viewer = createSignedViewer(() => { if (toPreview.length && autoBox.checked) viewer.open(toPreview.shift()); });
 
+    // Admins only: "All users" shows everyone's documents with an Owner column.
+    const allBox = $("#show-all-jobs");
+    if (allBox) {
+      try { allBox.checked = localStorage.getItem("dsc.showAllJobs") === "1"; } catch (_) {}
+      allBox.addEventListener("change", () => {
+        try { localStorage.setItem("dsc.showAllJobs", allBox.checked ? "1" : "0"); } catch (_) {}
+        refreshJobs();
+      });
+    }
+
     async function refreshJobs() {
       let data;
-      try { data = await api("/api/jobs"); } catch (_) { return; }
+      const showAll = !!(allBox && allBox.checked);
+      try { data = await api("/api/jobs" + (showAll ? "?scope=all" : "")); } catch (_) { return; }
+      const allMode = data.scope === "all";
+      $$(".owner-col").forEach((th) => th.classList.toggle("hidden", !allMode));
+      $("#queue-title").textContent = allMode ? "Signing queue (all users)" : "My signing queue";
       data.jobs.forEach((j) => {
         if (!watched.has(j.id)) return;
         if (j.status === "COMPLETED" && j.download_url) { watched.delete(j.id); toPreview.push(j); }
@@ -371,7 +385,7 @@
       body.textContent = "";
       if (!data.jobs.length) {
         const tr = document.createElement("tr"); const td = document.createElement("td");
-        td.colSpan = 5; td.className = "py-6 text-center text-slate-400"; td.textContent = "No jobs yet.";
+        td.colSpan = allMode ? 6 : 5; td.className = "py-6 text-center text-slate-400"; td.textContent = "No jobs yet.";
         tr.append(td); body.append(tr); return;
       }
       data.jobs.forEach((j) => {
@@ -396,7 +410,10 @@
           d.addEventListener("click", async () => { try { await api(`/api/jobs/${j.id}`, { method: "DELETE" }); refreshJobs(); } catch (ex) { alert(ex.message); } });
           c5.append(d);
         }
-        tr.append(c1, c2, c3, c4, c5); body.append(tr);
+        const cells = [c1];
+        if (allMode) { const co = document.createElement("td"); co.className = "pr-3 text-xs"; co.textContent = j.owner || ""; if (j.mine) co.textContent += " (you)"; cells.push(co); }
+        cells.push(c2, c3, c4, c5);
+        tr.append(...cells); body.append(tr);
       });
     }
 

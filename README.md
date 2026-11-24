@@ -306,9 +306,11 @@ If the token is unplugged and replugged, the worker reconnects on its next healt
 The upload preview and the signed-PDF preview both scroll, zoom (**−** / **+** / **Fit**) and
 have a page box: type a page number and press Enter to jump straight to it in long PDFs.
 
-Each user sees only the documents they queued themselves. That includes admins: nobody can
-list, preview, download or delete another user's PDFs. The Admin Panel's audit log records
-who signed, previewed and downloaded what.
+Regular users see only the documents they queued themselves. Nobody else can list, preview,
+download or delete them, except admins. Admins get an **All users** checkbox above the queue
+that shows everyone's documents with an **Owner** column, and they can preview, download or
+remove any of them. The Admin Panel's audit log records who previewed and downloaded what,
+and marks it when an admin opened someone else's document.
 
 The stamp looks like Adobe Acrobat's: the certificate holder's name in large text on the
 left, and *"Digitally signed by <name> / Date: yyyy.mm.dd HH:MM:SS +05'30'"* (plus Reason and
