@@ -49,9 +49,36 @@ Write-Host "NSSM: $Nssm" -ForegroundColor Cyan
 
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 
+function Stop-DscService {
+    # Ask the service to stop; if it is still running (or stuck in StopPending) after 30 s,
+    # end its process tree (nssm.exe + python.exe) so it can be reconfigured and restarted.
+    $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if (-not $svc -or $svc.Status -eq 'Stopped') { return }
+    Write-Host "Stopping $ServiceName ..." -ForegroundColor Cyan
+    & $Nssm stop $ServiceName 2>&1 | Out-Null
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $svc.Refresh()
+        if ($svc.Status -eq 'Stopped') { return }
+        Start-Sleep -Seconds 1
+    }
+    $svcPid = (Get-CimInstance Win32_Service -Filter "Name='$ServiceName'").ProcessId
+    if ($svcPid -and $svcPid -ne 0) {
+        Write-Warning "$ServiceName did not stop in time; ending its process (PID $svcPid)."
+        & taskkill.exe /PID $svcPid /T /F 2>&1 | Out-Null
+    }
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline) {
+        $svc.Refresh()
+        if ($svc.Status -eq 'Stopped') { return }
+        Start-Sleep -Seconds 1
+    }
+    throw "$ServiceName is still $($svc.Status). Restart Windows, then run this script again."
+}
+
 if ($Uninstall) {
     if ($existing) {
-        & $Nssm stop $ServiceName | Out-Null
+        Stop-DscService
         & $Nssm remove $ServiceName confirm
         Write-Host "Service $ServiceName removed." -ForegroundColor Green
     } else {
@@ -75,7 +102,7 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 if ($existing) {
     Write-Host "Service exists; updating configuration." -ForegroundColor Yellow
-    & $Nssm stop $ServiceName | Out-Null
+    Stop-DscService
 } else {
     & $Nssm install $ServiceName $VenvPy
     if ($LASTEXITCODE -ne 0) { throw "nssm install failed" }
@@ -97,7 +124,7 @@ if ($UseTls) {
     foreach ($f in @($SslCert, $SslKey)) { if (-not (Test-Path $f)) { throw "SSL file not found: $f (see INSTALL.md, LAN setup)" } }
 }
 
-$appArgs = "-m uvicorn app.main:app --host $HostAddr --port $Port --workers 1 --no-server-header"
+$appArgs = "-m uvicorn app.main:app --host $HostAddr --port $Port --workers 1 --no-server-header --timeout-graceful-shutdown 5"
 if ($UseTls) { $appArgs += " --ssl-certfile `"$SslCert`" --ssl-keyfile `"$SslKey`"" }
 & $Nssm set $ServiceName Application $VenvPy | Out-Null
 & $Nssm set $ServiceName AppParameters $appArgs | Out-Null
@@ -112,7 +139,10 @@ if ($UseTls) { $appArgs += " --ssl-certfile `"$SslCert`" --ssl-keyfile `"$SslKey
 & $Nssm set $ServiceName AppRotateBytes 5000000 | Out-Null
 & $Nssm set $ServiceName AppExit Default Restart | Out-Null
 & $Nssm set $ServiceName AppRestartDelay 5000 | Out-Null
-& $Nssm set $ServiceName AppStopMethodConsole 15000 | Out-Null
+& $Nssm set $ServiceName AppStopMethodConsole 10000 | Out-Null
+& $Nssm set $ServiceName AppStopMethodWindow 3000 | Out-Null
+& $Nssm set $ServiceName AppStopMethodThreads 3000 | Out-Null
+& $Nssm set $ServiceName AppKillProcessTree 1 | Out-Null
 & $Nssm set $ServiceName AppEnvironmentExtra 'PYTHONUNBUFFERED=1' | Out-Null
 
 if ($RunAsUser) {

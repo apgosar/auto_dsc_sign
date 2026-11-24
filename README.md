@@ -20,7 +20,7 @@ whitelist and device locks.
 
 Contents: [1. Prerequisites](#1-prerequisites-winget) · [2. ePass 2003 driver & certificate check](#2-epass-2003-driver--certificate-verification) ·
 [3. Install the app](#3-install-the-app) · [4. First run](#4-first-run-local-test) · [5. Windows service (NSSM)](#5-run-as-a-windows-service-nssm) ·
-[6. Cloudflare Tunnel](#6-expose-it-with-cloudflare-tunnel) · [7. Keep the laptop awake](#7-keep-the-laptop-and-token-awake) ·
+[6. Cloudflare Tunnel](#6-expose-it-with-cloudflare-tunnel) · [7. When the app is available](#7-when-the-app-is-available) ·
 [8. Using the app](#8-using-the-app) · [9. Admin Panel](#9-admin-panel) · [10. Testing without the token](#10-testing-without-the-token) ·
 [11. Troubleshooting](#11-troubleshooting) · [12. Security notes](#12-security-notes)
 
@@ -265,25 +265,13 @@ Access login and an app login.
 
 ---
 
-## 7. Keep the laptop (and token) awake
+## 7. When the app is available
 
-A sleeping laptop or a power-saved USB port takes the token offline. From an Administrator
-PowerShell, while on AC power:
-
-```powershell
-powercfg /change standby-timeout-ac 0
-powercfg /change hibernate-timeout-ac 0
-powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
-powercfg /SETACVALUEINDEX SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0
-powercfg /SETACTIVE SCHEME_CURRENT
-```
-
-These turn off sleep and hibernate, make closing the lid do nothing, and disable USB selective
-suspend. Also uncheck *"Allow the computer to turn off this device to save power"* for the USB
-Root Hubs in Device Manager → Power Management.
-
-If the token is unplugged and replugged, the worker reconnects on its next health check
-(every 15 s).
+The service starts automatically at boot, so the app is up whenever the laptop is on; no
+power settings need changing. While the laptop is off or asleep the app can't be reached.
+After it wakes up, or after the token is unplugged and plugged back in, the worker
+reconnects to the token on its next health check (every 15 s) and signs anything still
+queued.
 
 ---
 

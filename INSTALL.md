@@ -265,32 +265,16 @@ Restart-Service DSCSigner
 Get-Content C:\dsc-signer\logs\app.log -Tail 50 -Wait
 ```
 
-## Step 10: Keep the PC and the USB port awake
+## Step 10: When the app is available
 
-```powershell
-powercfg /change standby-timeout-ac 0
-```
+No power settings need changing. The `DSCSigner` service starts automatically whenever the
+laptop is switched on (Windows starts it at boot, before anyone logs in), so the app is
+available whenever the laptop is on and the token is plugged in.
 
-```powershell
-powercfg /change hibernate-timeout-ac 0
-```
-
-```powershell
-powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
-```
-
-```powershell
-powercfg /SETACVALUEINDEX SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0
-```
-
-```powershell
-powercfg /SETACTIVE SCHEME_CURRENT
-```
-
-These disable sleep, hibernate, the lid-close action (laptops) and USB selective suspend while
-on AC power. Keep the PC plugged in. Optionally, in **Device Manager → Universal Serial Bus
-controllers → each USB Root Hub → Power Management**, untick *Allow the computer to turn off
-this device to save power*.
+* While the laptop is off or asleep, users can't open the app.
+* After the laptop wakes up, or the token is plugged back in, the app reconnects to the token
+  by itself within about 15 seconds. Documents that were waiting in the queue are then signed.
+* The green/red badge at the top of the page shows whether the token is ready.
 
 ## Step 11: Let other people reach the app
 
