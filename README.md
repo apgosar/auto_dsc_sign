@@ -300,9 +300,28 @@ If the token is unplugged and replugged, the worker reconnects on its next healt
 4. The queue table refreshes every 3 s (`QUEUED #n → PROCESSING → COMPLETED / FAILED`). Click
    **Download** for the signed file (`<name>_signed.pdf`).
 
-The stamp reads *"Digitally signed by <certificate name> / Date: dd-mm-yyyy hh:mm:ss IST /
-Reason / Location"*. Rotated and cropped pages are handled: the stamp is drawn upright where you
-placed it. "All pages" and "all occurrences" add one signature per page or occurrence, each a
+The stamp looks like Adobe Acrobat's: the certificate holder's name in large text on the
+left, and *"Digitally signed by <name> / Date: yyyy.mm.dd HH:MM:SS +05'30'"* (plus Reason and
+Location if given) on the right, with no border. `SIGN_STAMP_STYLE=classic` in `.env` switches to
+a boxed text stamp instead. Rotated and cropped pages are handled: the stamp is drawn upright
+where you placed it.
+
+**Logo watermark (optional).** To show your own logo faded behind the stamp text, copy the
+image onto the DSC PC (a PNG with a transparent background works best; JPEG also works) and
+set it in `.env`:
+
+```ini
+SIGN_STAMP_LOGO=C:\dsc-signer\branding\logo.png
+SIGN_STAMP_LOGO_OPACITY=0.15
+```
+
+Opacity runs from `0.0` (invisible) to `1.0` (solid); 0.15 to 0.3 reads well behind text. The
+logo is centred and scaled to fit the box, and large images are downscaled. Restart the service
+after changing it. If the file is missing or unreadable, documents are still signed without the
+watermark, and `logs\app.log` shows a warning. Use only artwork you have the right to use. Other
+companies' logos, such as Adobe's, are their trademarks.
+
+"All pages" and "all occurrences" add one signature per page or occurrence, each a
 separate token operation. That's slower, so it is capped by `MAX_SIGNATURES_PER_DOC`.
 
 Uploaded and signed files are deleted after `FILE_RETENTION_MINUTES`.

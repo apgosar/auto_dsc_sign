@@ -320,6 +320,9 @@ def _install_rotation_patch() -> None:
         if style == "acrobat":
             xobj = acrobat_stamp.make_xobject(
                 w, h,
+                writer=writer,
+                logo_path=settings.SIGN_STAMP_LOGO.strip(),
+                logo_opacity=settings.SIGN_STAMP_LOGO_OPACITY,
                 name=self.name or "Signer",
                 timestamp=self.timestamp,
                 tz_name=settings.SIGN_TIMEZONE,

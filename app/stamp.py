@@ -16,7 +16,11 @@ font, no embedding needed), black text, no border.
 """
 from __future__ import annotations
 
+import logging
+import zlib
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pymupdf
@@ -162,18 +166,112 @@ def build_appearance_stream(width: float, height: float, *, name: str, timestamp
     return b"\n".join(cmds)
 
 
-def make_xobject(width: float, height: float, **kwargs):
+# --------------------------------------------------------------------------- logo watermark
+MAX_LOGO_PIXELS = 800  # longest side kept in the PDF; bigger images are downscaled
+
+
+@dataclass
+class LogoImage:
+    width: int
+    height: int
+    rgb: bytes            # zlib-compressed DeviceRGB samples
+    alpha: bytes | None   # zlib-compressed DeviceGray soft mask, or None
+
+
+_logo_cache: dict[tuple[str, float], LogoImage] = {}
+
+
+def load_logo(path: str) -> LogoImage:
+    """Decode a PNG/JPEG (or anything PyMuPDF reads) once and cache it."""
+    p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(f"SIGN_STAMP_LOGO not found: {path}")
+    key = (str(p.resolve()), p.stat().st_mtime)
+    if key in _logo_cache:
+        return _logo_cache[key]
+    pix = pymupdf.Pixmap(str(p))
+    while max(pix.width, pix.height) > MAX_LOGO_PIXELS:
+        pix.shrink(1)  # halves both sides
+    if pix.colorspace is None or pix.colorspace.n != 3:
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+    samples = pix.samples
+    if pix.alpha:
+        n = len(samples) // 4
+        rgb = bytearray(n * 3)
+        rgb[0::3], rgb[1::3], rgb[2::3] = samples[0::4], samples[1::4], samples[2::4]
+        alpha = zlib.compress(bytes(samples[3::4]))
+        rgb_bytes = bytes(rgb)
+    else:
+        rgb_bytes, alpha = bytes(samples), None
+    logo = LogoImage(pix.width, pix.height, zlib.compress(rgb_bytes), alpha)
+    _logo_cache.clear()
+    _logo_cache[key] = logo
+    return logo
+
+
+def _image_xobject(writer, logo: LogoImage):
+    from pyhanko.pdf_utils import generic
+
+    n = generic.pdf_name
+
+    def img(data: bytes, cs: str, extra: dict | None = None):
+        d = {
+            n("/Type"): n("/XObject"), n("/Subtype"): n("/Image"),
+            n("/Width"): generic.NumberObject(logo.width), n("/Height"): generic.NumberObject(logo.height),
+            n("/ColorSpace"): n(cs), n("/BitsPerComponent"): generic.NumberObject(8),
+            n("/Filter"): n("/FlateDecode"),
+        }
+        d.update(extra or {})
+        return writer.add_object(generic.StreamObject(d, encoded_data=data))
+
+    extra = {n("/SMask"): img(logo.alpha, "/DeviceGray")} if logo.alpha else None
+    return img(logo.rgb, "/DeviceRGB", extra)
+
+
+def _logo_commands(logo: LogoImage, width: float, height: float, opacity: float) -> list[bytes]:
+    """Centre the logo in the box ('contain' fit, 90% of the box), faded to `opacity`."""
+    scale = min(width * 0.9 / logo.width, height * 0.9 / logo.height)
+    w, h = logo.width * scale, logo.height * scale
+    x, y = (width - w) / 2, (height - h) / 2
+    return [b"q", f"/GSLogo gs".encode(), f"{w:.2f} 0 0 {h:.2f} {x:.2f} {y:.2f} cm".encode(), b"/ImLogo Do", b"Q"]
+
+
+def make_xobject(width: float, height: float, *, writer=None, logo_path: str = "",
+                 logo_opacity: float = 0.15, **kwargs):
     """Build the pyHanko form XObject (StreamObject) for the appearance."""
     from pyhanko.pdf_utils import generic
     from pyhanko.pdf_utils.writer import init_xobject_dictionary
 
+    n = generic.pdf_name
+    width, height = float(width), float(height)
     font = generic.DictionaryObject({
-        generic.pdf_name("/Type"): generic.pdf_name("/Font"),
-        generic.pdf_name("/Subtype"): generic.pdf_name("/Type1"),
-        generic.pdf_name("/BaseFont"): generic.pdf_name("/Helvetica"),
-        generic.pdf_name("/Encoding"): generic.pdf_name("/WinAnsiEncoding"),
+        n("/Type"): n("/Font"),
+        n("/Subtype"): n("/Type1"),
+        n("/BaseFont"): n("/Helvetica"),
+        n("/Encoding"): n("/WinAnsiEncoding"),
     })
     resources = generic.DictionaryObject({
-        generic.pdf_name("/Font"): generic.DictionaryObject({generic.pdf_name(FONT_RES_NAME): font}),
+        n("/Font"): generic.DictionaryObject({n(FONT_RES_NAME): font}),
     })
-    return init_xobject_dictionary(build_appearance_stream(width, height, **kwargs), width, height, resources)
+    content = build_appearance_stream(width, height, **kwargs)
+
+    logo = None
+    if logo_path and writer is not None:
+        try:
+            logo = load_logo(logo_path)
+        except Exception as exc:  # noqa: BLE001  a bad logo must never block signing
+            logging.getLogger("dsc.stamp").warning("Watermark skipped (%s): %s", logo_path, exc)
+    if logo is not None:
+        opacity = min(max(float(logo_opacity), 0.0), 1.0)
+        resources[n("/XObject")] = generic.DictionaryObject({n("/ImLogo"): _image_xobject(writer, logo)})
+        resources[n("/ExtGState")] = generic.DictionaryObject({
+            n("/GSLogo"): generic.DictionaryObject({
+                n("/Type"): n("/ExtGState"),
+                n("/ca"): generic.FloatObject(opacity),
+                n("/CA"): generic.FloatObject(opacity),
+            })
+        })
+        # logo first, so the text is drawn on top of it
+        content = b"\n".join(_logo_commands(logo, width, height, opacity)) + b"\n" + content
+
+    return init_xobject_dictionary(content, width, height, resources)
