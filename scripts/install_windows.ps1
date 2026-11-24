@@ -63,23 +63,36 @@ if (-not $SkipWinget) {
 
 # ------------------------------------------------------------------ 2. python + venv
 function Find-Python {
-    $candidates = @()
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        foreach ($v in @('3.13', '3.12', '3.11')) {
-            $p = & py "-$v" -c "import sys; print(sys.executable)" 2>$null
-            if ($LASTEXITCODE -eq 0 -and $p) { $candidates += $p.Trim() }
-        }
-    }
-    $candidates += @(
-        "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe",
-        "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+    # 1) well-known install folders (3.11 first: the version this app is tested on)
+    $known = @(
+        "$env:ProgramFiles\Python311\python.exe",
         "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
-        "$env:ProgramFiles\Python313\python.exe",
         "$env:ProgramFiles\Python312\python.exe",
-        "$env:ProgramFiles\Python311\python.exe"
+        "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+        "$env:ProgramFiles\Python313\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe"
     )
-    foreach ($c in $candidates) {
-        if ($c -and (Test-Path $c) -and ($c -notlike '*WindowsApps*')) { return $c }
+    foreach ($c in $known) {
+        if (Test-Path $c) { return $c }
+    }
+    # 2) ask the py launcher. A missing version makes py write to stderr, which Windows
+    #    PowerShell 5.1 turns into a terminating error under 'Stop', so relax it here.
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        $oldPref = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            foreach ($v in @('3.11', '3.12', '3.13')) {
+                try {
+                    $p = & py "-$v" -c "import sys; print(sys.executable)" 2>$null
+                    if ($LASTEXITCODE -eq 0 -and $p) {
+                        $p = ($p | Select-Object -Last 1).Trim()
+                        if ((Test-Path $p) -and ($p -notlike '*WindowsApps*')) { return $p }
+                    }
+                } catch { }
+            }
+        } finally {
+            $ErrorActionPreference = $oldPref
+        }
     }
     return $null
 }
