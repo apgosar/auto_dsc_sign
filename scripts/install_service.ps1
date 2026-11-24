@@ -180,7 +180,13 @@ try {
         [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
     }
-    $r = Invoke-WebRequest -UseBasicParsing -Uri "${Scheme}://127.0.0.1:$Port/healthz" -TimeoutSec 10
+    # the app can take a while to start (loading PDF libraries, first token check): retry up to ~30 s
+    $r = $null
+    for ($i = 0; $i -lt 10 -and -not $r; $i++) {
+        try { $r = Invoke-WebRequest -UseBasicParsing -Uri "${Scheme}://127.0.0.1:$Port/healthz" -TimeoutSec 5 }
+        catch { Start-Sleep -Seconds 3 }
+    }
+    if (-not $r) { throw "no response" }
     Write-Host "Health check OK: $($r.Content)" -ForegroundColor Green
     Write-Host "On this PC:  ${Scheme}://127.0.0.1:$Port"
     if ($HostAddr -ne '127.0.0.1' -and $HostAddr -ne 'localhost') {
