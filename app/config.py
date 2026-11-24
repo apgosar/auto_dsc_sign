@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     SIGN_REASON: str = ""
     SIGN_LOCATION: str = ""
     SIGN_TIMEZONE: str = "Asia/Kolkata"
+    # "acrobat": two-column stamp like Adobe Acrobat (name left, details right, no border)
+    # "classic": single text block with a border
+    SIGN_STAMP_STYLE: str = "acrobat"
     MAX_SIGNATURES_PER_DOC: int = 50
 
     # ---- Auth / security ----

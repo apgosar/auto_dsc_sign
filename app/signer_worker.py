@@ -299,6 +299,8 @@ def _install_rotation_patch() -> None:
     from pyhanko.pdf_utils.layout import BoxConstraints
     from pyhanko.sign.signers import cms_embedder
 
+    from . import stamp as acrobat_stamp
+
     cls = cms_embedder.SigAppearanceSetup
     if getattr(cls, "_dsc_rotation_patched", False):
         return
@@ -306,20 +308,38 @@ def _install_rotation_patch() -> None:
 
     def apply(self, sig_annot, writer):
         rotation = getattr(_appearance_ctx, "rotation", 0)
-        if rotation not in _ROTATION_MATRICES:
-            return original_apply(self, sig_annot, writer)
+        style = getattr(_appearance_ctx, "style", "classic")
         w, h = cms_embedder.annot_width_height(sig_annot)
         if not (w and h):
             return original_apply(self, sig_annot, writer)
+        if rotation not in _ROTATION_MATRICES and style != "acrobat":
+            return original_apply(self, sig_annot, writer)
         if rotation in (90, 270):
             w, h = h, w
-        stamp = self._appearance_stamp(writer, BoxConstraints(width=w, height=h))
-        if not stamp:
-            return None
-        stamp.apply_appearance(sig_annot)
-        ap_stream = sig_annot["/AP"]["/N"]
-        ap_stream = ap_stream.get_object() if hasattr(ap_stream, "get_object") else ap_stream
-        ap_stream["/Matrix"] = generic.ArrayObject(generic.FloatObject(v) for v in _ROTATION_MATRICES[rotation])
+
+        if style == "acrobat":
+            xobj = acrobat_stamp.make_xobject(
+                w, h,
+                name=self.name or "Signer",
+                timestamp=self.timestamp,
+                tz_name=settings.SIGN_TIMEZONE,
+                reason=getattr(_appearance_ctx, "reason", ""),
+                location=getattr(_appearance_ctx, "location", ""),
+            )
+            sig_annot["/AP"] = generic.DictionaryObject({generic.pdf_name("/N"): writer.add_object(xobj)})
+            if "/AS" in sig_annot:
+                del sig_annot["/AS"]
+            ap_stream = xobj
+        else:
+            stamp = self._appearance_stamp(writer, BoxConstraints(width=w, height=h))
+            if not stamp:
+                return None
+            stamp.apply_appearance(sig_annot)
+            ap_stream = sig_annot["/AP"]["/N"]
+            ap_stream = ap_stream.get_object() if hasattr(ap_stream, "get_object") else ap_stream
+
+        if rotation in _ROTATION_MATRICES:
+            ap_stream["/Matrix"] = generic.ArrayObject(generic.FloatObject(v) for v in _ROTATION_MATRICES[rotation])
         writer.update_container(sig_annot)
         return None
 
@@ -379,6 +399,8 @@ def sign_pdf_bytes(signer, data: bytes, boxes: list[dict], *, reason: str, locat
         out = io.BytesIO()
         _install_rotation_patch()
         _appearance_ctx.rotation = int(b.get("rotation", 0)) % 360
+        _appearance_ctx.style = settings.SIGN_STAMP_STYLE
+        _appearance_ctx.reason, _appearance_ctx.location = reason, location
         try:
             pdf_signer.sign_pdf(
                 writer,
@@ -387,6 +409,7 @@ def sign_pdf_bytes(signer, data: bytes, boxes: list[dict], *, reason: str, locat
             )
         finally:
             _appearance_ctx.rotation = 0
+            _appearance_ctx.style = "classic"
         current = out.getvalue()
     return current
 
