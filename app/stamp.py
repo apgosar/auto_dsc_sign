@@ -244,9 +244,14 @@ def _logo_commands(logo: LogoImage, width: float, height: float, align: str = "c
     """
     if align == "left":
         pad = max(2.0, height * PAD)
-        scale = min((width - 2 * pad) * 0.45 / logo.width, (height - 2 * pad) / logo.height)
+        inner_w = width - 2 * pad
+        scale = min(inner_w * 0.45 / logo.width, (height - 2 * pad) / logo.height)
         w, h = logo.width * scale, logo.height * scale
-        x, y = pad, (height - h) / 2
+        # Sit the logo's right edge on the start of the details column, so it fills the empty
+        # space between the name and the details instead of hugging the left border.
+        details_x = pad + inner_w * LEFT_SHARE + width * GAP_SHARE
+        x = max(pad, details_x - w)
+        y = (height - h) / 2
     else:
         scale = min(width * 0.9 / logo.width, height * 0.9 / logo.height)
         w, h = logo.width * scale, logo.height * scale
